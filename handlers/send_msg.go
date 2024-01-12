@@ -25,28 +25,28 @@ func HandleSendMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openapi.Ope
 		// 当 message.Echo 是字符串类型时执行此块
 		msgType = echo.GetMsgTypeByKey(echoStr)
 	}
-	//如果获取不到 就用group_id获取信息类型
 	if msgType == "" {
 		msgType = GetMessageTypeByGroupid(config.GetAppIDStr(), message.Params.GroupID)
 	}
-	//如果获取不到 就用user_id获取信息类型
 	if msgType == "" {
 		msgType = GetMessageTypeByUserid(config.GetAppIDStr(), message.Params.UserID)
-	}
-	//新增 内存获取不到从数据库获取
-	if msgType == "" {
-		msgType = GetMessageTypeByUseridV2(message.Params.UserID)
 	}
 	if msgType == "" {
 		msgType = GetMessageTypeByGroupidV2(message.Params.GroupID)
 	}
-	var idInt64 int64
+	if msgType == "" {
+		msgType = GetMessageTypeByUseridV2(message.Params.UserID)
+	}
+
+	var idInt64, idInt642 int64
 	var err error
 
 	if message.Params.GroupID != "" {
-		idInt64, err = ConvertToInt64(message.Params.GroupID)
+		idInt64, _ = ConvertToInt64(message.Params.GroupID)
+		idInt642, _ = ConvertToInt64(message.Params.UserID)
 	} else if message.Params.UserID != "" {
-		idInt64, err = ConvertToInt64(message.Params.UserID)
+		idInt64, _ = ConvertToInt64(message.Params.UserID)
+		idInt642, _ = ConvertToInt64(message.Params.GroupID)
 	}
 
 	//设置递归 对直接向gsk发送action时有效果
@@ -99,6 +99,7 @@ func HandleSendMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openapi.Ope
 	//重置递归类型
 	if echo.GetMapping(idInt64) <= 0 {
 		echo.AddMsgType(config.GetAppIDStr(), idInt64, "")
+		echo.AddMsgType(config.GetAppIDStr(), idInt642, "")
 	}
 	echo.AddMapping(idInt64, echo.GetMapping(idInt64)-1)
 
