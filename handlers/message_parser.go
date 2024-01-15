@@ -119,7 +119,8 @@ func parseMessageContent(paramsMessage callapi.ParamsContent, message callapi.Ac
 				segmentContent = "[CQ:at,qq=" + qqNumber + "]"
 			case "markdown":
 				mdContent, _ := segmentMap["data"].(map[string]interface{})["data"].(string)
-				segmentContent = "[CQ:markdown,data=" + mdContent + "]"
+				encoded := "base64://" + base64.StdEncoding.EncodeToString([]byte(mdContent))
+				segmentContent = "[CQ:markdown,data=" + encoded + "]"
 			}
 
 			messageText += segmentContent
@@ -145,7 +146,8 @@ func parseMessageContent(paramsMessage callapi.ParamsContent, message callapi.Ac
 			messageText = "[CQ:at,qq=" + qqNumber + "]"
 		case "markdown":
 			mdContent, _ := message["data"].(map[string]interface{})["data"].(string)
-			messageText = "[CQ:markdown,data=" + mdContent + "]"
+			encoded := "base64://" + base64.StdEncoding.EncodeToString([]byte(mdContent))
+			messageText = "[CQ:markdown,data=" + encoded + "]"
 		}
 	default:
 		mylog.Println("Unsupported message format: params.message field is not a string, map or slice")
@@ -503,8 +505,8 @@ func RevertTransformedText(data interface{}, msgtype string, api openapi.OpenAPI
 	aliases := config.GetAlias()
 	messageText = processMessageText(messageText, aliases)
 	//mylog.Printf("4[%v]", messageText)
-	// 检查是否启用白名单模式
-	if config.GetWhitePrefixMode() && matchedPrefix != nil {
+	// 检查是否启用二级白名单模式
+	if config.GetVwhitePrefixMode() && matchedPrefix != nil {
 		// 获取白名单反转标志
 		whiteBypassRevers := config.GetWhiteBypassRevers()
 
