@@ -87,10 +87,12 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 			mylog.Printf("GetLazyMessagesId: %v", messageID)
 			//如果应用端传递了user_id 就让at不要顺序乱套
 			if message.Params.UserID != nil {
-				messageID = echo.GetLazyMessagesId(message.Params.UserID.(string))
+				messageID = echo.GetLazyMessagesIdv2(message.Params.GroupID.(string), message.Params.UserID.(string))
 				mylog.Printf("GetLazyMessagesIdv2: %v", messageID)
 			}
-			if messageID != "" {
+			//2000是群主动 此时不能被动转主动
+			//仅在开启lazy_message_id时，有信息主动转被动特性，即，SSM
+			if messageID != "2000" {
 				//尝试发送栈内信息
 				SSM = true
 			}
@@ -143,6 +145,7 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 		}
 		message.Params.GroupID = originalGroupID
 		message.Params.UserID = originalUserID
+		//2000是群主动 此时不能被动转主动
 		if SSM {
 			//mylog.Printf("正在使用Msgid:%v 补发之前失败的主动信息,请注意AtoP不要设置超过3,否则可能会影响正常信息发送", messageID)
 			//mylog.Printf("originalGroupID:%v ", originalGroupID)
@@ -165,9 +168,13 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 			messageID = GetMessageIDByUseridOrGroupid(config.GetAppIDStr(), message.Params.GroupID)
 			mylog.Println("通过GetMessageIDByUseridOrGroupid函数获取的message_id:", message.Params.GroupID, messageID)
 		}
-		//开发环境用
-		if config.GetDevMsgID() {
-			messageID = "1000"
+		//开发环境用 1000在群里无效
+		// if config.GetDevMsgID() {
+		// 	messageID = "1000"
+		// }
+		if messageID == "2000" {
+			messageID = ""
+			mylog.Println("通过lazymessage_id模式发送群聊/频道主动信息,群聊每月仅4次机会,如果本信息非主动推送信息,请提交issue")
 		}
 		mylog.Printf("群组发信息使用messageID:[%v]", messageID)
 		var singleItem = make(map[string][]string)
@@ -1076,7 +1083,7 @@ func auto_md(message callapi.ActionMessage, messageText string, richMediaMessage
 					isSpecialType = true
 				}
 				if len(msg_on_touch) >= len(vp.Prefix) {
-					if msg_on_touch != " " {
+					if msg_on_touch != "" {
 						transmd = true
 						matchedPrefix = &vp
 						break // 匹配到了
@@ -1174,8 +1181,9 @@ func auto_md(message callapi.ActionMessage, messageText string, richMediaMessage
 				var actiondata string
 				//检查是否设置了enter数组
 				enter := checkDataLabelPrefix(dataLabel)
-				switch whiteLabel {
-				case "邀请机器人", "邀请我", "添加我":
+
+				switch {
+				case strings.HasPrefix(whiteLabel, "邀请机器人"): //默认是群
 					botuin := config.GetUinStr()
 					botappid := config.GetAppIDStr()
 					boturl := BuildQQBotShareLink(botuin, botappid)
@@ -1184,19 +1192,49 @@ func auto_md(message callapi.ActionMessage, messageText string, richMediaMessage
 					permission = &keyboard.Permission{
 						Type: 2, // 所有人可操作
 					}
-				case "测试按钮回调":
+				case strings.HasPrefix(whiteLabel, "添加到群聊"):
+					botuin := config.GetUinStr()
+					botappid := config.GetAppIDStr()
+					boturl := BuildQQBotShareLink(botuin, botappid)
+					actiontype = 0
+					actiondata = boturl
+					permission = &keyboard.Permission{
+						Type: 2, // 所有人可操作
+					}
+				case strings.HasPrefix(whiteLabel, "添加到频道"):
+					botuin := config.GetUinStr()
+					botappid := config.GetAppIDStr()
+					boturl := BuildQQBotShareLinkGuild(botuin, botappid)
+					actiontype = 0
+					actiondata = boturl
+					permission = &keyboard.Permission{
+						Type: 2, // 所有人可操作
+					}
+				case strings.HasPrefix(whiteLabel, "权限判断"):
 					actiontype = 1
 					actiondata = "收到就代表是管理员哦"
 					permission = &keyboard.Permission{
 						Type: 1, // 仅管理可操作
 					}
+				case strings.HasPrefix(whiteLabel, "%"):
+					// 分割whiteLabel来获取显示内容和URL
+					parts := strings.SplitN(whiteLabel[1:], " ", 2) // [1:] 用于去除白名单标签开头的'%'
+					if len(parts) == 2 {
+						whiteLabel = parts[0] // 显示内容
+						actiondata = parts[1] // URL
+						actiontype = 0        // 链接类型
+						permission = &keyboard.Permission{
+							Type: 2, // 所有人可操作
+						}
+					}
 				default:
-					actiontype = 2         //帮用户输入指令
+					actiontype = 2         //帮用户输入指令 用户自己回车发送
 					actiondata = dataLabel //从虚拟前缀的二级指令组合md按钮
 					permission = &keyboard.Permission{
 						Type: 2, // 所有人可操作
 					}
 				}
+
 				// 创建按钮
 				button := &keyboard.Button{
 					RenderData: &keyboard.RenderData{
@@ -1239,6 +1277,11 @@ func auto_md(message callapi.ActionMessage, messageText string, richMediaMessage
 // 构建QQ群机器人分享链接的函数
 func BuildQQBotShareLink(uin string, appid string) string {
 	return fmt.Sprintf("https://qun.qq.com/qunpro/robot/qunshare?robot_uin=%s&robot_appid=%s", uin, appid)
+}
+
+// 构建QQ群机器人分享链接的函数
+func BuildQQBotShareLinkGuild(uin string, appid string) string {
+	return fmt.Sprintf("https://qun.qq.com/qunpro/robot/share?robot_appid=%s", appid)
 }
 
 // 检查dataLabel是否以config中getenters返回的任一字符串开头
