@@ -26,6 +26,14 @@ func CombinedMiddleware(api openapi.OpenAPI, apiV2 openapi.OpenAPI) gin.HandlerF
 			handleSendGuildChannelMessage(c, api, apiV2)
 			return
 		}
+		if c.Request.URL.Path == "/get_group_list" {
+			handleGetGroupList(c, api, apiV2)
+			return
+		}
+		if c.Request.URL.Path == "/put_interaction" {
+			handlePutInteraction(c, api, apiV2)
+			return
+		}
 
 		// 调用c.Next()以继续处理请求链
 		c.Next()
@@ -37,6 +45,7 @@ func handleSendGroupMessage(c *gin.Context, api openapi.OpenAPI, apiV2 openapi.O
 	var retmsg string
 	var req struct {
 		GroupID    int64  `json:"group_id" form:"group_id"`
+		UserID     *int64 `json:"user_id,omitempty" form:"user_id"`
 		Message    string `json:"message" form:"message"`
 		AutoEscape bool   `json:"auto_escape" form:"auto_escape"`
 	}
@@ -65,6 +74,10 @@ func handleSendGroupMessage(c *gin.Context, api openapi.OpenAPI, apiV2 openapi.O
 			GroupID: strconv.FormatInt(req.GroupID, 10), // 注意这里需要转换类型，因为 GroupID 是 int64
 			Message: req.Message,
 		},
+	}
+	// 如果 UserID 存在，则加入到参数中
+	if req.UserID != nil {
+		message.Params.UserID = strconv.FormatInt(*req.UserID, 10)
 	}
 	// 调用处理函数
 	retmsg, err := handlers.HandleSendGroupMsg(client, api, apiV2, message)
@@ -191,4 +204,69 @@ func (c *HttpAPIClient) SendMessage(message map[string]interface{}) error {
 
 	// 返回nil占位符
 	return nil
+}
+
+// handleGetGroupList 处理获取群列表
+func handleGetGroupList(c *gin.Context, api openapi.OpenAPI, apiV2 openapi.OpenAPI) {
+	var retmsg string
+
+	// 使用解析后的参数处理请求
+	client := &HttpAPIClient{}
+	// 创建 ActionMessage 实例
+	message := callapi.ActionMessage{
+		Action: "get_group_list",
+	}
+
+	// 调用处理函数
+	retmsg, err := handlers.GetGroupList(client, api, apiV2, message)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 返回处理结果
+	c.Header("Content-Type", "application/json")
+	c.String(http.StatusOK, retmsg)
+}
+
+// handlePutInteraction 处理put_interaction的请求
+func handlePutInteraction(c *gin.Context, api openapi.OpenAPI, apiV2 openapi.OpenAPI) {
+	var req struct {
+		Echo     string `json:"echo" form:"echo"`           // Echo值用于标识interaction
+		PostType string `json:"post_type" form:"post_type"` // PostType用于设置code参数
+	}
+
+	// 根据请求方法解析参数
+	if c.Request.Method == http.MethodGet {
+		// 从URL查询参数解析
+		if err := c.ShouldBindQuery(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	} else {
+		// 从JSON或表单数据解析
+		if err := c.ShouldBind(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
+	// 创建 ActionMessage 实例
+	message := callapi.ActionMessage{
+		Action:   "put_interaction",
+		Echo:     req.Echo,
+		PostType: req.PostType,
+	}
+
+	// 调用处理函数
+	client := &HttpAPIClient{} // 假设HttpAPIClient实现了callapi.Client接口
+	retmsg, err := handlers.HandlePutInteraction(client, api, apiV2, message)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 返回处理结果
+	c.Header("Content-Type", "application/json")
+	c.String(http.StatusOK, retmsg)
 }

@@ -23,11 +23,14 @@ settings:
     # - "InteractionHandler"                         # 添加频道互动回应 卡片按钮data回调事件
     # - "GroupATMessageEventHandler"                 # 群at信息 仅频道机器人时候需要注释
     # - "C2CMessageEventHandler"                     # 群私聊 仅频道机器人时候需要注释
-    # - "ThreadEventHandler"                         # 发帖事件 (当前版本已禁用)
+    # - "ThreadEventHandler"                         # 频道发帖事件 仅频道私域机器人可用
 
 
   global_channel_to_group: true                      # 是否将频道转换成群 默认true
   global_private_to_channel: false                   # 是否将私聊转换成频道 如果是群场景 会将私聊转为群(方便提审\测试)
+  global_forum_to_channel: false                     # 是否将频道帖子信息转化为频道 子频道信息 如果开启global_channel_to_group会进一步转换为群信息
+  global_interaction_to_message : false              # 是否将按钮和表态回调转化为消息 仅在设置了按钮回调中的message时有效
+  bot_forum_title : "机器人帖子"                      # 机器人发帖子回复默认标题  
   array: false                                       # 连接trss云崽请开启array
   hash_id : false                                    # 使用hash来进行idmaps转换,可以让user_id不是123开始的递增值
 
@@ -126,6 +129,11 @@ settings:
   url_pic_transfer : false          #把图片url(任意来源图链)变成你备案的白名单url 需要较高上下行+ssl+自备案域名+设置白名单域名(暂时不需要)
   idmap_pro : false                 #需开启hash_id配合,高级id转换增强,可以多个真实值bind到同一个虚拟值,对于每个用户,每个群\私聊\判断私聊\频道,都会产生新的虚拟值,但可以多次bind,bind到同一个数字.数据库负担会变大.
   send_delay : 300                  #单位 毫秒 默认300ms 可以视情况减少到100或者50
+  disable_webui: false              #禁用webui
+  shard_count: 1                    #分片数量 默认1
+  shard_id: 0                       #当前分片id 默认从0开始,详细请看 https://bot.q.qq.com/wiki/develop/api/gateway/reference.html
+  auto_put_interaction : false      #自动回应按钮回调的/interactions/{interaction_id} 注本api需要邮件申请,详细方法参考群公告:196173384
+  put_interaction_delay : 0         #单位毫秒 表示回应已收到回调类型的按钮的毫秒数 会按用户进行区分 非全局delay
 
   title : "Gensokyo © 2023 - Hoshinonyaruko"              #程序的标题 如果多个机器人 可根据标题区分
   custom_bot_name : "Gensokyo全域机器人"                   #自定义机器人名字,会在api调用中返回,默认Gensokyo全域机器人
@@ -145,6 +153,7 @@ settings:
   me_prefix : "/me"                 #需设置   #增强配置项  master_id 可触发
   unlock_prefix : "/unlock"         #频道私信卡住了? gsk可以帮到你 在任意子频道发送unlock 你会收到来自机器人的频道私信
   link_prefix : "/link"             #友情链接配置 配置custom_template_id后可用(https://www.yuque.com/km57bt/hlhnxg/tzbr84y59dbz6pib)
+  music_prefix : "点歌"             #[CQ:music,type=qq,id=123] 在消息文本组合qq音乐歌曲id,可以发送点歌,这是歌曲按钮第二个按钮的填充内容,应为你的机器人点歌插件的指令.
   link_bots : ["",""]               #发送友情链接时 下方按钮携带的机器人 格式 "appid-qq-name","appid-qq-name"
   link_text : ""                    #友情链接文本 不可为空!
   link_pic : ""                     #友情链接图片 可为空 需url图片 可带端口 不填可能会有显示错误
