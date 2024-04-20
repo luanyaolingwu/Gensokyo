@@ -7,7 +7,6 @@ require (
 	github.com/aliyun/alibaba-cloud-sdk-go v1.62.645
 	github.com/aliyun/aliyun-oss-go-sdk v3.0.1+incompatible
 	github.com/baidubce/bce-sdk-go v0.9.161
-	github.com/boltdb/bolt v1.3.1
 	github.com/fatih/color v1.15.0
 	github.com/gin-gonic/gin v1.9.1
 	github.com/google/uuid v1.4.0
@@ -16,6 +15,7 @@ require (
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/tencent-connect/botgo v0.1.6
 	github.com/tencentyun/cos-go-sdk-v5 v0.7.45
+	go.etcd.io/bbolt v1.3.9
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -69,6 +69,6 @@ require (
 	golang.org/x/net v0.10.0
 	golang.org/x/sys v0.13.0
 	golang.org/x/text v0.9.0 // indirect
-	google.golang.org/protobuf v1.30.0 // indirect
+	google.golang.org/protobuf v1.32.0
 	mvdan.cc/xurls v1.1.0
 )

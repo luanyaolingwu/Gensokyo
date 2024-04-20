@@ -36,17 +36,51 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 		// 当 message.Echo 是字符串类型时执行此块
 		msgType = echo.GetMsgTypeByKey(echoStr)
 	}
-	if msgType == "" {
+	// 检查GroupID是否为0
+	checkZeroGroupID := func(id interface{}) bool {
+		switch v := id.(type) {
+		case int:
+			return v != 0
+		case int64:
+			return v != 0
+		case string:
+			return v != "0" // 检查字符串形式的0
+		default:
+			return true // 如果不是int、int64或string，假定它不为0
+		}
+	}
+
+	// 检查UserID是否为0
+	checkZeroUserID := func(id interface{}) bool {
+		switch v := id.(type) {
+		case int:
+			return v != 0
+		case int64:
+			return v != 0
+		case string:
+			return v != "0" // 同样检查字符串形式的0
+		default:
+			return true // 如果不是int、int64或string，假定它不为0
+		}
+	}
+
+	if msgType == "" && message.Params.GroupID != nil && checkZeroGroupID(message.Params.GroupID) {
 		msgType = GetMessageTypeByGroupid(config.GetAppIDStr(), message.Params.GroupID)
 	}
-	if msgType == "" {
+	if msgType == "" && message.Params.UserID != nil && checkZeroUserID(message.Params.UserID) {
 		msgType = GetMessageTypeByUserid(config.GetAppIDStr(), message.Params.UserID)
 	}
-	if msgType == "" {
+	if msgType == "" && message.Params.GroupID != nil && checkZeroGroupID(message.Params.GroupID) {
 		msgType = GetMessageTypeByGroupidV2(message.Params.GroupID)
 	}
-	if msgType == "" {
+	if msgType == "" && message.Params.UserID != nil && checkZeroUserID(message.Params.UserID) {
 		msgType = GetMessageTypeByUseridV2(message.Params.UserID)
+	}
+	// New checks for UserID and GroupID being nil or 0
+	if (message.Params.UserID == nil || !checkZeroUserID(message.Params.UserID)) &&
+		(message.Params.GroupID == nil || !checkZeroGroupID(message.Params.GroupID)) {
+		mylog.Printf("send_group_msgs接收到错误action: %v", message)
+		return "", nil
 	}
 	mylog.Printf("send_group_msg获取到信息类型:%v", msgType)
 	var idInt64 int64
@@ -71,6 +105,9 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 			echo.AddMsgType(config.GetAppIDStr(), idInt64, "group_private")
 			retmsg, _ = HandleSendGroupMsg(client, api, apiv2, messageCopy)
 		}
+	} else {
+		// 特殊值代表不递归
+		echo.AddMapping(idInt64, 10)
 	}
 
 	switch msgType {
@@ -88,6 +125,10 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 			if message.Params.UserID != nil {
 				messageID = echo.GetLazyMessagesIdv2(message.Params.GroupID.(string), message.Params.UserID.(string))
 				mylog.Printf("GetLazyMessagesIdv2: %v", messageID)
+			} else {
+				//如果应用端没有传递userid 那就用群号模式的lazyid 但是不保证顺序是对的
+				messageID = echo.GetLazyMessagesId(message.Params.GroupID.(string))
+				mylog.Printf("GetLazyMessagesIdv1: %v", messageID)
 			}
 			//2000是群主动 此时不能被动转主动
 			//仅在开启lazy_message_id时，有信息主动转被动特性，即，SSM
@@ -205,7 +246,7 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 			singleItem[imageType] = []string{imageUrl}
 			msgseq := echo.GetMappingSeq(messageID)
 			echo.AddMappingSeq(messageID, msgseq+1)
-			groupReply := generateGroupMessage(messageID, singleItem, "", msgseq+1)
+			groupReply := generateGroupMessage(messageID, singleItem, "", msgseq+1, apiv2, message.Params.GroupID.(string))
 			// 进行类型断言
 			richMediaMessage, ok := groupReply.(*dto.RichMediaMessage)
 			if !ok {
@@ -259,10 +300,9 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 
 			}
 			// 发送组合消息
-			_, err = apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
+			resp, err := apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
 			if err != nil {
 				mylog.Printf("发送组合消息失败: %v", err)
-				return "", nil // 或其他错误处理
 			}
 			if err != nil && strings.Contains(err.Error(), `"code":22009`) {
 				mylog.Printf("信息发送失败,加入到队列中,下次被动信息进行发送")
@@ -273,7 +313,7 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 			}
 
 			// 发送成功回执
-			retmsg, _ = SendResponse(client, err, &message)
+			retmsg, _ = SendResponse(client, err, &message, resp, api, apiv2)
 
 			delete(foundItems, imageType) // 从foundItems中删除已处理的图片项
 			messageText = ""
@@ -283,7 +323,7 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 		if messageText != "" {
 			msgseq := echo.GetMappingSeq(messageID)
 			echo.AddMappingSeq(messageID, msgseq+1)
-			groupReply := generateGroupMessage(messageID, nil, messageText, msgseq+1)
+			groupReply := generateGroupMessage(messageID, nil, messageText, msgseq+1, apiv2, message.Params.GroupID.(string))
 
 			// 进行类型断言
 			groupMessage, ok := groupReply.(*dto.MessageToCreate)
@@ -294,7 +334,7 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 
 			groupMessage.Timestamp = time.Now().Unix() // 设置时间戳
 			//重新为err赋值
-			_, err = apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
+			resp, err := apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
 			if err != nil {
 				mylog.Printf("发送文本群组信息失败: %v", err)
 			}
@@ -306,9 +346,9 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 				echo.PushGlobalStack(pair)
 			}
 			//发送成功回执
-			retmsg, _ = SendResponse(client, err, &message)
+			retmsg, _ = SendResponse(client, err, &message, resp, api, apiv2)
 		}
-
+		var resp *dto.GroupMessageResponse
 		// 遍历foundItems并发送每种信息
 		for key, urls := range foundItems {
 			for _, url := range urls {
@@ -317,7 +357,7 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 				//mylog.Println("singleItem:", singleItem)
 				msgseq := echo.GetMappingSeq(messageID)
 				echo.AddMappingSeq(messageID, msgseq+1)
-				groupReply := generateGroupMessage(messageID, singleItem, "", msgseq+1)
+				groupReply := generateGroupMessage(messageID, singleItem, "", msgseq+1, apiv2, message.Params.GroupID.(string))
 				// 进行类型断言
 				richMediaMessage, ok := groupReply.(*dto.RichMediaMessage)
 				if !ok {
@@ -330,7 +370,7 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 							return "", nil // 或其他错误处理
 						}
 						//重新为err赋值
-						_, err = apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
+						resp, err := apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
 						if err != nil {
 							mylog.Printf("发送md信息失败: %v", err)
 						}
@@ -342,7 +382,7 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 							echo.PushGlobalStack(pair)
 						}
 						//发送成功回执
-						retmsg, _ = SendResponse(client, err, &message)
+						retmsg, _ = SendResponse(client, err, &message, resp, api, apiv2)
 					}
 					continue // 跳过这个项，继续下一个
 				}
@@ -352,7 +392,7 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 					if config.GetSendError() { //把报错当作文本发出去
 						msgseq := echo.GetMappingSeq(messageID)
 						echo.AddMappingSeq(messageID, msgseq+1)
-						groupReply := generateGroupMessage(messageID, nil, err.Error(), msgseq+1)
+						groupReply := generateGroupMessage(messageID, nil, err.Error(), msgseq+1, apiv2, message.Params.GroupID.(string))
 						// 进行类型断言
 						groupMessage, ok := groupReply.(*dto.MessageToCreate)
 						if !ok {
@@ -361,7 +401,7 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 						}
 						groupMessage.Timestamp = time.Now().Unix() // 设置时间戳
 						//重新为err赋值
-						_, err = apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
+						resp, err = apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
 						if err != nil {
 							mylog.Printf("发送文本报错信息失败: %v", err)
 						}
@@ -389,7 +429,7 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 					}
 					groupMessage.Timestamp = time.Now().Unix() // 设置时间戳
 					//重新为err赋值
-					_, err = apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
+					resp, err = apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
 					if err != nil {
 						mylog.Printf("发送图片失败: %v", err)
 					}
@@ -402,7 +442,7 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 					}
 				}
 				//发送成功回执
-				retmsg, _ = SendResponse(client, err, &message)
+				retmsg, _ = SendResponse(client, err, &message, resp, api, apiv2)
 			}
 		}
 	case "guild":
@@ -410,12 +450,12 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 		message.Params.ChannelID = message.Params.GroupID.(string)
 		var RChannelID string
 		if message.Params.UserID != nil && config.GetIdmapPro() {
-			RChannelID, _, err = idmap.RetrieveRowByIDv2Pro(message.Params.ChannelID, message.Params.UserID.(string))
+			RChannelID, _, err = idmap.RetrieveRowByIDv2Pro(message.Params.ChannelID.(string), message.Params.UserID.(string))
 			mylog.Printf("测试,通过Proid获取的RChannelID:%v", RChannelID)
 		}
 		if RChannelID == "" {
 			// 使用RetrieveRowByIDv2还原真实的ChannelID
-			RChannelID, err = idmap.RetrieveRowByIDv2(message.Params.ChannelID)
+			RChannelID, err = idmap.RetrieveRowByIDv2(message.Params.ChannelID.(string))
 		}
 		if err != nil {
 			mylog.Printf("error retrieving real RChannelID: %v", err)
@@ -435,11 +475,11 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 			return "", nil
 		}
 		if Vuserid != "" && config.GetIdmapPro() {
-			RChannelID, _, err = idmap.RetrieveRowByIDv2Pro(message.Params.ChannelID, Vuserid)
+			RChannelID, _, err = idmap.RetrieveRowByIDv2Pro(message.Params.ChannelID.(string), Vuserid)
 			mylog.Printf("测试,通过Proid获取的RChannelID:%v", RChannelID)
 		} else {
 			// 使用RetrieveRowByIDv2还原真实的ChannelID
-			RChannelID, err = idmap.RetrieveRowByIDv2(message.Params.ChannelID)
+			RChannelID, err = idmap.RetrieveRowByIDv2(message.Params.ChannelID.(string))
 		}
 		if err != nil {
 			mylog.Printf("error retrieving real ChannelID: %v", err)
@@ -460,12 +500,12 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 		message.Params.ChannelID = message.Params.GroupID.(string)
 		var RChannelID string
 		if message.Params.UserID != nil && config.GetIdmapPro() {
-			RChannelID, _, err = idmap.RetrieveRowByIDv2Pro(message.Params.ChannelID, message.Params.UserID.(string))
+			RChannelID, _, err = idmap.RetrieveRowByIDv2Pro(message.Params.ChannelID.(string), message.Params.UserID.(string))
 			mylog.Printf("测试,通过Proid获取的RChannelID:%v", RChannelID)
 		}
 		if RChannelID == "" {
 			// 使用RetrieveRowByIDv2还原真实的ChannelID
-			RChannelID, err = idmap.RetrieveRowByIDv2(message.Params.ChannelID)
+			RChannelID, err = idmap.RetrieveRowByIDv2(message.Params.ChannelID.(string))
 		}
 		if err != nil {
 			mylog.Printf("error retrieving real RChannelID: %v", err)
@@ -477,26 +517,33 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 	default:
 		mylog.Printf("Unknown message type: %s", msgType)
 	}
-	//重置递归类型
-	if echo.GetMapping(idInt64) <= 0 {
-		echo.AddMsgType(config.GetAppIDStr(), idInt64, "")
-	}
-	echo.AddMapping(idInt64, echo.GetMapping(idInt64)-1)
 
-	//递归3次枚举类型
-	if echo.GetMapping(idInt64) > 0 {
-		tryMessageTypes := []string{"group", "guild", "guild_private"}
-		messageCopy := message // 创建message的副本
-		echo.AddMsgType(config.GetAppIDStr(), idInt64, tryMessageTypes[echo.GetMapping(idInt64)-1])
-		delay := config.GetSendDelay()
-		time.Sleep(time.Duration(delay) * time.Millisecond)
-		HandleSendGroupMsg(client, api, apiv2, messageCopy)
+	// 如果递归id不是10(不递归特殊值)
+	if echo.GetMapping(idInt64) != 10 {
+		//重置递归类型 递归结束重置类型,避免下一次同样id,不同类型的请求被使用上一次类型
+		if echo.GetMapping(idInt64) <= 0 {
+			echo.AddMsgType(config.GetAppIDStr(), idInt64, "")
+		}
+
+		//减少递归计数器
+		echo.AddMapping(idInt64, echo.GetMapping(idInt64)-1)
+
+		//递归3次枚举类型
+		if echo.GetMapping(idInt64) > 0 {
+			tryMessageTypes := []string{"group", "guild", "guild_private"}
+			messageCopy := message // 创建message的副本
+			echo.AddMsgType(config.GetAppIDStr(), idInt64, tryMessageTypes[echo.GetMapping(idInt64)-1])
+			delay := config.GetSendDelay()
+			time.Sleep(time.Duration(delay) * time.Millisecond)
+			retmsg, _ = HandleSendGroupMsg(client, api, apiv2, messageCopy)
+		}
 	}
+
 	return retmsg, nil
 }
 
 // 上传富媒体信息
-func generateGroupMessage(id string, foundItems map[string][]string, messageText string, msgseq int) interface{} {
+func generateGroupMessage(id string, foundItems map[string][]string, messageText string, msgseq int, apiv2 openapi.OpenAPI, groupid string) interface{} {
 	if imageURLs, ok := foundItems["local_image"]; ok && len(imageURLs) > 0 {
 		// 从本地路径读取图片
 		imageData, err := os.ReadFile(imageURLs[0])
@@ -527,7 +574,7 @@ func generateGroupMessage(id string, foundItems map[string][]string, messageText
 		base64Encoded := base64.StdEncoding.EncodeToString(compressedData)
 
 		// 上传base64编码的图片并获取其URL
-		imageURL, err := images.UploadBase64ImageToServer(base64Encoded)
+		imageURL, _, _, _, err := images.UploadBase64ImageToServer(id, base64Encoded, groupid, apiv2)
 		if err != nil {
 			mylog.Printf("Error uploading base64 encoded image: %v", err)
 			// 如果上传失败，也返回文本信息，提示上传失败
@@ -569,10 +616,7 @@ func generateGroupMessage(id string, foundItems map[string][]string, messageText
 				return nil
 			}
 			RecordData = silk.EncoderSilk(RecordData)
-			mylog.Errorf("音频转码ing")
-			if err != nil {
-				return nil
-			}
+			mylog.Printf("音频转码ing")
 		}
 		// 将解码的语音数据转换回base64格式并上传
 		imageURL, err := images.UploadBase64RecordToServer(base64.StdEncoding.EncodeToString(RecordData))
@@ -620,7 +664,7 @@ func generateGroupMessage(id string, foundItems map[string][]string, messageText
 			base64Encoded := base64.StdEncoding.EncodeToString(imageData)
 
 			// 上传图片并获取新的URL
-			newURL, err := images.UploadBase64ImageToServer(base64Encoded)
+			newURL, _, _, _, err := images.UploadBase64ImageToServer(id, base64Encoded, groupid, apiv2)
 			if err != nil {
 				mylog.Printf("Error uploading base64 encoded image: %v", err)
 				return &dto.MessageToCreate{
@@ -685,7 +729,7 @@ func generateGroupMessage(id string, foundItems map[string][]string, messageText
 			base64Encoded := base64.StdEncoding.EncodeToString(imageData)
 
 			// 上传图片并获取新的URL
-			newURL, err := images.UploadBase64ImageToServer(base64Encoded)
+			newURL, _, _, _, err := images.UploadBase64ImageToServer(id, base64Encoded, groupid, apiv2)
 			if err != nil {
 				mylog.Printf("Error uploading base64 encoded image: %v", err)
 				return &dto.MessageToCreate{
@@ -735,10 +779,7 @@ func generateGroupMessage(id string, foundItems map[string][]string, messageText
 					return nil
 				}
 				fileRecordData = silk.EncoderSilk(fileRecordData)
-				mylog.Errorf("音频转码ing")
-				if err != nil {
-					return nil
-				}
+				mylog.Printf("音频转码ing")
 			}
 			// 将解码的语音数据转换回base64格式并上传
 			imageURL, err := images.UploadBase64RecordToServer(base64.StdEncoding.EncodeToString(fileRecordData))
@@ -788,10 +829,7 @@ func generateGroupMessage(id string, foundItems map[string][]string, messageText
 				return nil
 			}
 			recordData = silk.EncoderSilk(recordData)
-			mylog.Errorf("音频转码ing")
-			if err != nil {
-				return nil
-			}
+			mylog.Printf("音频转码ing")
 		}
 		// 转换为base64
 		base64Encoded := base64.StdEncoding.EncodeToString(recordData)
@@ -849,10 +887,7 @@ func generateGroupMessage(id string, foundItems map[string][]string, messageText
 				return nil
 			}
 			recordData = silk.EncoderSilk(recordData)
-			mylog.Errorf("音频转码ing")
-			if err != nil {
-				return nil
-			}
+			mylog.Printf("音频转码ing")
 		}
 		// 转换为base64
 		base64Encoded := base64.StdEncoding.EncodeToString(recordData)
@@ -899,7 +934,7 @@ func generateGroupMessage(id string, foundItems map[string][]string, messageText
 			}
 		}
 		// 将解码的图片数据转换回base64格式并上传
-		imageURL, err := images.UploadBase64ImageToServer(base64.StdEncoding.EncodeToString(compressedData))
+		imageURL, _, _, _, err := images.UploadBase64ImageToServer(id, base64.StdEncoding.EncodeToString(compressedData), groupid, apiv2)
 		if err != nil {
 			mylog.Printf("failed to upload base64 image: %v", err)
 			return nil
@@ -1096,7 +1131,7 @@ func SendStackMessages(apiv2 openapi.OpenAPI, messageid string, GroupID string) 
 	mylog.Printf("取出数量: %v", count)
 	pairs := echo.PopGlobalStackMulti(count)
 	for i, pair := range pairs {
-		mylog.Printf("发送栈中的消息匹配 %v: %v", pair.Group, GroupID)
+		//mylog.Printf("发送栈中的消息匹配 %v: %v", pair.Group, GroupID)
 		if pair.Group == GroupID {
 			// 发送消息
 			msgseq := echo.GetMappingSeq(messageid)
@@ -1243,6 +1278,10 @@ func auto_md(message callapi.ActionMessage, messageText string, richMediaMessage
 				var actiondata string
 				//检查是否设置了enter数组
 				enter := checkDataLabelPrefix(dataLabel)
+				//例外规则
+				if checkDataLabelPrefixExcept(whiteLabel) {
+					enter = false
+				}
 
 				switch {
 				case strings.HasPrefix(whiteLabel, "邀请机器人"): //默认是群
@@ -1289,6 +1328,17 @@ func auto_md(message callapi.ActionMessage, messageText string, richMediaMessage
 							Type: 2, // 所有人可操作
 						}
 					}
+				case strings.HasPrefix(whiteLabel, "^"):
+					// 分割whiteLabel来获取显示内容和URL
+					parts := strings.SplitN(whiteLabel[1:], " ", 2) // [1:] 用于去除白名单标签开头的'^'
+					if len(parts) == 2 {
+						whiteLabel = parts[0] // 显示内容
+						actiondata = parts[1] // 发送给服务端内容
+						actiontype = 1        // 回调类型
+						permission = &keyboard.Permission{
+							Type: 2, // 所有人可操作
+						}
+					}
 				default:
 					actiontype = 2         //帮用户输入指令 用户自己回车发送
 					actiondata = dataLabel //从虚拟前缀的二级指令组合md按钮
@@ -1324,8 +1374,25 @@ func auto_md(message callapi.ActionMessage, messageText string, richMediaMessage
 				currentRow.Buttons = append(currentRow.Buttons, button)
 				buttonCount++
 			}
-
 			// 在循环结束后，最后一行可能不满4个按钮，但已经被正确处理
+
+			// 在添加完所有按钮后，进行一次清理操作，如果按钮RenderData是空，不显示
+			for rowIndex := 0; rowIndex < len(customKeyboard.Rows); rowIndex++ {
+				row := customKeyboard.Rows[rowIndex]
+				// 临时存储有效按钮的切片
+				validButtons := []*keyboard.Button{}
+
+				// 遍历行中的所有按钮
+				for _, button := range row.Buttons {
+					// 检查按钮的RenderData是否为单个空格，这里可以根据需求调整条件
+					if button.RenderData.Label != " " {
+						validButtons = append(validButtons, button)
+					}
+				}
+
+				// 更新当前行的按钮为仅包含有效按钮的切片
+				customKeyboard.Rows[rowIndex].Buttons = validButtons
+			}
 
 			// 创建 MessageKeyboard 并设置其 Content
 			kb = &keyboard.MessageKeyboard{
@@ -1351,6 +1418,17 @@ func checkDataLabelPrefix(dataLabel string) bool {
 	enters := config.GetEnters()
 	for _, enter := range enters {
 		if enter != "" && strings.HasPrefix(dataLabel, enter) {
+			return true
+		}
+	}
+	return false
+}
+
+// 检查whiteLabel是否以config中getentersexcept返回的任一字符串开头
+func checkDataLabelPrefixExcept(whiteLabel string) bool {
+	enters := config.GetEntersExcept()
+	for _, enter := range enters {
+		if enter != "" && strings.HasPrefix(whiteLabel, enter) {
 			return true
 		}
 	}

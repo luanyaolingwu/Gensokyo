@@ -34,17 +34,51 @@ func HandleSendGuildChannelMsg(client callapi.Client, api openapi.OpenAPI, apiv2
 		// 当 message.Echo 是字符串类型时执行此块
 		msgType = echo.GetMsgTypeByKey(echoStr)
 	}
-	if msgType == "" {
+	// 检查GroupID是否为0
+	checkZeroGroupID := func(id interface{}) bool {
+		switch v := id.(type) {
+		case int:
+			return v != 0
+		case int64:
+			return v != 0
+		case string:
+			return v != "0" // 检查字符串形式的0
+		default:
+			return true // 如果不是int、int64或string，假定它不为0
+		}
+	}
+
+	// 检查UserID是否为0
+	checkZeroUserID := func(id interface{}) bool {
+		switch v := id.(type) {
+		case int:
+			return v != 0
+		case int64:
+			return v != 0
+		case string:
+			return v != "0" // 同样检查字符串形式的0
+		default:
+			return true // 如果不是int、int64或string，假定它不为0
+		}
+	}
+
+	if msgType == "" && message.Params.GroupID != nil && checkZeroGroupID(message.Params.GroupID) {
 		msgType = GetMessageTypeByGroupid(config.GetAppIDStr(), message.Params.GroupID)
 	}
-	if msgType == "" {
+	if msgType == "" && message.Params.UserID != nil && checkZeroUserID(message.Params.UserID) {
 		msgType = GetMessageTypeByUserid(config.GetAppIDStr(), message.Params.UserID)
 	}
-	if msgType == "" {
+	if msgType == "" && message.Params.GroupID != nil && checkZeroGroupID(message.Params.GroupID) {
 		msgType = GetMessageTypeByGroupidV2(message.Params.GroupID)
 	}
-	if msgType == "" {
+	if msgType == "" && message.Params.UserID != nil && checkZeroUserID(message.Params.UserID) {
 		msgType = GetMessageTypeByUseridV2(message.Params.UserID)
+	}
+	// New checks for UserID and GroupID being nil or 0
+	if (message.Params.UserID == nil || !checkZeroUserID(message.Params.UserID)) &&
+		(message.Params.GroupID == nil || !checkZeroGroupID(message.Params.GroupID)) {
+		mylog.Printf("send_group_msgs接收到错误action: %v", message)
+		return "", nil
 	}
 	//当不转换频道信息时(不支持频道私聊)
 	if msgType == "" {
@@ -61,7 +95,7 @@ func HandleSendGuildChannelMsg(client callapi.Client, api openapi.OpenAPI, apiv2
 		var messageID string
 		if config.GetLazyMessageId() {
 			//由于实现了Params的自定义unmarshell 所以可以类型安全的断言为string
-			messageID = echo.GetLazyMessagesId(channelID)
+			messageID = echo.GetLazyMessagesId(channelID.(string))
 			mylog.Printf("GetLazyMessagesId: %v", messageID)
 		}
 		if messageID == "" {
@@ -108,6 +142,7 @@ func HandleSendGuildChannelMsg(client callapi.Client, api openapi.OpenAPI, apiv2
 			imageCount++
 		}
 
+		var resp *dto.Message
 		if imageCount == 1 && messageText != "" {
 			//我想优化一下这里,让它优雅一点
 			mylog.Printf("发图文混合信息-频道")
@@ -129,7 +164,7 @@ func HandleSendGuildChannelMsg(client callapi.Client, api openapi.OpenAPI, apiv2
 				}
 				newMessage.Timestamp = time.Now().Unix() // 设置时间戳
 
-				if _, err = api.PostMessage(context.TODO(), channelID, newMessage); err != nil {
+				if _, err = api.PostMessage(context.TODO(), channelID.(string), newMessage); err != nil {
 					mylog.Printf("发送图文混合信息失败: %v", err)
 				}
 				// 检查是否是 40003 错误
@@ -156,7 +191,7 @@ func HandleSendGuildChannelMsg(client callapi.Client, api openapi.OpenAPI, apiv2
 								mylog.Printf("Error compressing image: %v", err)
 							}
 							// 使用 Multipart 方法发送
-							if _, err = api.PostMessageMultipart(context.TODO(), channelID, newMessage, compressedData); err != nil {
+							if _, err = api.PostMessageMultipart(context.TODO(), channelID.(string), newMessage, compressedData); err != nil {
 								mylog.Printf("40003重试,使用 multipart 发送图文混合信息失败: %v message_id %v", err, messageID)
 							}
 						}
@@ -184,12 +219,12 @@ func HandleSendGuildChannelMsg(client callapi.Client, api openapi.OpenAPI, apiv2
 				}
 				newMessage.Timestamp = time.Now().Unix() // 设置时间戳
 				// 使用Multipart方法发送
-				if _, err = api.PostMessageMultipart(context.TODO(), channelID, newMessage, compressedData); err != nil {
+				if resp, err = api.PostMessageMultipart(context.TODO(), channelID.(string), newMessage, compressedData); err != nil {
 					mylog.Printf("使用multipart发送图文信息失败: %v message_id %v", err, messageID)
 				}
 			}
 			// 发送成功回执
-			retmsg, _ = SendResponse(client, err, &message)
+			retmsg, _ = SendGuildResponse(client, err, &message, resp)
 			delete(foundItems, imageType) // 从foundItems中删除已处理的图片项
 			messageText = ""
 		}
@@ -200,11 +235,11 @@ func HandleSendGuildChannelMsg(client callapi.Client, api openapi.OpenAPI, apiv2
 			msgseq := echo.GetMappingSeq(messageID)
 			echo.AddMappingSeq(messageID, msgseq+1)
 			textMsg, _ := GenerateReplyMessage(messageID, nil, messageText, msgseq+1)
-			if _, err = api.PostMessage(context.TODO(), channelID, textMsg); err != nil {
+			if resp, err = api.PostMessage(context.TODO(), channelID.(string), textMsg); err != nil {
 				mylog.Printf("发送文本信息失败: %v", err)
 			}
 			//发送成功回执
-			retmsg, _ = SendResponse(client, err, &message)
+			retmsg, _ = SendGuildResponse(client, err, &message, resp)
 		}
 
 		// 遍历foundItems并发送每种信息
@@ -231,13 +266,13 @@ func HandleSendGuildChannelMsg(client callapi.Client, api openapi.OpenAPI, apiv2
 						mylog.Printf("Error compressing image: %v", err)
 					}
 					// 使用Multipart方法发送
-					if _, err = api.PostMessageMultipart(context.TODO(), channelID, reply, compressedData); err != nil {
+					if resp, err = api.PostMessageMultipart(context.TODO(), channelID.(string), reply, compressedData); err != nil {
 						mylog.Printf("使用multipart发送 %s 信息失败: %v message_id %v", key, err, messageID)
 					}
 					//发送成功回执
-					retmsg, _ = SendResponse(client, err, &message)
+					retmsg, _ = SendGuildResponse(client, err, &message, resp)
 				} else {
-					if _, err = api.PostMessage(context.TODO(), channelID, reply); err != nil {
+					if _, err = api.PostMessage(context.TODO(), channelID.(string), reply); err != nil {
 						mylog.Printf("发送 %s 信息失败: %v", key, err)
 					}
 					// 检查是否是 40003 错误
@@ -264,14 +299,14 @@ func HandleSendGuildChannelMsg(client callapi.Client, api openapi.OpenAPI, apiv2
 									mylog.Printf("Error compressing image: %v", err)
 								}
 								// 使用 Multipart 方法发送
-								if _, err = api.PostMessageMultipart(context.TODO(), channelID, reply, compressedData); err != nil {
+								if resp, err = api.PostMessageMultipart(context.TODO(), channelID.(string), reply, compressedData); err != nil {
 									mylog.Printf("40003重试,使用 multipart 发送 %s 信息失败: %v message_id %v", key, err, messageID)
 								}
 							}
 						}
 					}
 					//发送成功回执
-					retmsg, _ = SendResponse(client, err, &message)
+					retmsg, _ = SendGuildResponse(client, err, &message, resp)
 				}
 			}
 		}
@@ -283,11 +318,12 @@ func HandleSendGuildChannelMsg(client callapi.Client, api openapi.OpenAPI, apiv2
 		var RChannelID string
 		var err error
 		// 使用RetrieveRowByIDv2还原真实的ChannelID
-		RChannelID, err = idmap.RetrieveRowByIDv2(channelID)
+		RChannelID, err = idmap.RetrieveRowByIDv2(channelID.(string))
 		if err != nil {
 			mylog.Printf("error retrieving real UserID: %v", err)
 		}
-		retmsg, _ = HandleSendGuildChannelPrivateMsg(client, api, apiv2, message, &guildID, &RChannelID)
+		RguildID := guildID.(string)
+		retmsg, _ = HandleSendGuildChannelPrivateMsg(client, api, apiv2, message, &RguildID, &RChannelID)
 	case "forum":
 		//api一样的 直接丢进去试试
 		retmsg, _ = HandleSendGuildChannelForum(client, api, apiv2, message)

@@ -17,6 +17,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/hoshinonyaruko/gensokyo/Processor"
+	"github.com/hoshinonyaruko/gensokyo/botstats"
 	"github.com/hoshinonyaruko/gensokyo/config"
 	"github.com/hoshinonyaruko/gensokyo/handlers"
 	"github.com/hoshinonyaruko/gensokyo/httpapi"
@@ -44,6 +45,7 @@ var p *Processor.Processors
 func main() {
 	// 定义faststart命令行标志。默认为false。
 	fastStart := flag.Bool("faststart", false, "start without initialization if set")
+	tidy := flag.Bool("tidy", false, "backup and tidy your config.yml")
 
 	// 解析命令行参数到定义的标志。
 	flag.Parse()
@@ -51,6 +53,12 @@ func main() {
 	// 检查是否使用了-faststart参数
 	if !*fastStart {
 		sys.InitBase() // 如果不是faststart模式，则执行初始化
+	}
+	if *tidy {
+		//备份配置 并刷新
+		config.CreateAndWriteConfigTemp()
+		log.Println("配置文件已更新为新版,当前配置文件已备份.如产生问题请到群196173384反馈开发者。")
+		return
 	}
 	if _, err := os.Stat("config.yml"); os.IsNotExist(err) {
 		var ip string
@@ -155,8 +163,9 @@ func main() {
 		}
 
 		configURL := config.GetDevelop_Acdir()
+		fix11300 := config.GetFix11300()
 		var me *dto.User
-		if configURL == "" { // 执行API请求 显示机器人信息
+		if configURL == "" && !fix11300 { // 执行API请求 显示机器人信息
 			me, err = api.Me(ctx) // Adjusted to pass only the context
 			if err != nil {
 				log.Printf("Error fetching bot details: %v\n", err)
@@ -168,7 +177,7 @@ func main() {
 			log.Printf("自定义ac地址模式...请从日志手动获取bot的真实id并设置,不然at会不正常")
 		}
 		if !nologin {
-			if configURL == "" { //初始化handlers
+			if configURL == "" && !fix11300 { //初始化handlers
 				handlers.BotID = me.ID
 			} else { //初始化handlers
 				handlers.BotID = config.GetDevBotid()
@@ -275,8 +284,8 @@ func main() {
 					// 所有客户端都成功初始化
 					p = Processor.NewProcessor(api, apiV2, &conf.Settings, wsClients)
 				}
-			} else if conf.Settings.EnableWsServer {
-				log.Println("只启动正向ws")
+			} else {
+				log.Println("提示,目前只启动了正向ws或httpapi")
 				p = Processor.NewProcessorV2(api, apiV2, &conf.Settings)
 			}
 		} else {
@@ -290,9 +299,14 @@ func main() {
 
 	//创建idmap服务器 数据库
 	idmap.InitializeDB()
+	//创建botstats数据库
+	botstats.InitializeDB()
 	//创建webui数据库
 	webui.InitializeDB()
+
+	//关闭时候释放数据库
 	defer idmap.CloseDB()
+	defer botstats.CloseDB()
 	defer webui.CloseDB()
 
 	//图片上传 调用次数限制
@@ -319,6 +333,8 @@ func main() {
 	r.GET("/updateport", server.HandleIpupdate)
 	r.POST("/delpic", server.DeleteImageHandler(rateLimiter))
 	r.POST("/uploadpic", server.UploadBase64ImageHandler(rateLimiter))
+	r.POST("/uploadpicv2", server.UploadBase64ImageHandlerV2(rateLimiter, apiV2))
+	r.POST("/uploadpicv3", server.UploadBase64ImageHandlerV3(rateLimiter, api))
 	r.POST("/uploadrecord", server.UploadBase64RecordHandler(rateLimiter))
 	r.Static("/channel_temp", "./channel_temp")
 	if config.GetFrpPort() == "0" && !config.GetDisableWebui() {
@@ -510,6 +526,7 @@ func ErrorNotifyHandler() event.ErrorNotifyHandler {
 // ATMessageEventHandler 实现处理 频道at 消息的回调
 func ATMessageEventHandler() event.ATMessageEventHandler {
 	return func(event *dto.WSPayload, data *dto.WSATMessageData) error {
+		botstats.RecordMessageReceived()
 		return p.ProcessGuildATMessage(data)
 	}
 }
@@ -541,6 +558,7 @@ func MemberEventHandler() event.GuildMemberEventHandler {
 // DirectMessageHandler 处理私信事件
 func DirectMessageHandler() event.DirectMessageEventHandler {
 	return func(event *dto.WSPayload, data *dto.WSDirectMessageData) error {
+		botstats.RecordMessageReceived()
 		return p.ProcessChannelDirectMessage(data)
 	}
 }
@@ -548,6 +566,7 @@ func DirectMessageHandler() event.DirectMessageEventHandler {
 // CreateMessageHandler 处理消息事件 私域的事件 不at信息
 func CreateMessageHandler() event.MessageEventHandler {
 	return func(event *dto.WSPayload, data *dto.WSMessageData) error {
+		botstats.RecordMessageReceived()
 		return p.ProcessGuildNormalMessage(data)
 	}
 }
@@ -571,6 +590,7 @@ func ThreadEventHandler() event.ThreadEventHandler {
 // GroupATMessageEventHandler 实现处理 群at 消息的回调
 func GroupATMessageEventHandler() event.GroupATMessageEventHandler {
 	return func(event *dto.WSPayload, data *dto.WSGroupATMessageData) error {
+		botstats.RecordMessageReceived()
 		return p.ProcessGroupMessage(data)
 	}
 }
@@ -578,6 +598,7 @@ func GroupATMessageEventHandler() event.GroupATMessageEventHandler {
 // C2CMessageEventHandler 实现处理 群私聊 消息的回调
 func C2CMessageEventHandler() event.C2CMessageEventHandler {
 	return func(event *dto.WSPayload, data *dto.WSC2CMessageData) error {
+		botstats.RecordMessageReceived()
 		return p.ProcessC2CMessage(data)
 	}
 }

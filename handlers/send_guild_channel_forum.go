@@ -30,18 +30,53 @@ func HandleSendGuildChannelForum(client callapi.Client, api openapi.OpenAPI, api
 		// 当 message.Echo 是字符串类型时执行此块
 		msgType = echo.GetMsgTypeByKey(echoStr)
 	}
-	if msgType == "" {
+	// 检查GroupID是否为0
+	checkZeroGroupID := func(id interface{}) bool {
+		switch v := id.(type) {
+		case int:
+			return v != 0
+		case int64:
+			return v != 0
+		case string:
+			return v != "0" // 检查字符串形式的0
+		default:
+			return true // 如果不是int、int64或string，假定它不为0
+		}
+	}
+
+	// 检查UserID是否为0
+	checkZeroUserID := func(id interface{}) bool {
+		switch v := id.(type) {
+		case int:
+			return v != 0
+		case int64:
+			return v != 0
+		case string:
+			return v != "0" // 同样检查字符串形式的0
+		default:
+			return true // 如果不是int、int64或string，假定它不为0
+		}
+	}
+
+	if msgType == "" && message.Params.GroupID != nil && checkZeroGroupID(message.Params.GroupID) {
 		msgType = GetMessageTypeByGroupid(config.GetAppIDStr(), message.Params.GroupID)
 	}
-	if msgType == "" {
+	if msgType == "" && message.Params.UserID != nil && checkZeroUserID(message.Params.UserID) {
 		msgType = GetMessageTypeByUserid(config.GetAppIDStr(), message.Params.UserID)
 	}
-	if msgType == "" {
+	if msgType == "" && message.Params.GroupID != nil && checkZeroGroupID(message.Params.GroupID) {
 		msgType = GetMessageTypeByGroupidV2(message.Params.GroupID)
 	}
-	if msgType == "" {
+	if msgType == "" && message.Params.UserID != nil && checkZeroUserID(message.Params.UserID) {
 		msgType = GetMessageTypeByUseridV2(message.Params.UserID)
 	}
+	// New checks for UserID and GroupID being nil or 0
+	if (message.Params.UserID == nil || !checkZeroUserID(message.Params.UserID)) &&
+		(message.Params.GroupID == nil || !checkZeroGroupID(message.Params.GroupID)) {
+		mylog.Printf("send_group_msgs接收到错误action: %v", message)
+		return "", nil
+	}
+
 	//当不转换频道信息时(不支持频道私聊)
 	if msgType == "" {
 		msgType = "forum"
@@ -57,16 +92,16 @@ func HandleSendGuildChannelForum(client callapi.Client, api openapi.OpenAPI, api
 
 		mylog.Println("频道发帖子messageText:", messageText)
 
-		Forum, err := GenerateForumMessage(foundItems, messageText)
+		Forum, err := GenerateForumMessage(foundItems, messageText, apiv2)
 		if err != nil {
 			mylog.Printf("组合帖子信息失败: %v", err)
 		}
-		if _, err = api.PostFourm(context.TODO(), channelID, Forum); err != nil {
+		if _, err = api.PostFourm(context.TODO(), channelID.(string), Forum); err != nil {
 			mylog.Printf("发送帖子信息失败: %v", err)
 		}
 
 		//发送成功回执
-		retmsg, _ = SendResponse(client, err, &message)
+		retmsg, _ = SendResponse(client, err, &message, nil, api, apiv2)
 
 	default:
 		mylog.Printf("2Unknown message type: %s", msgType)
@@ -152,7 +187,7 @@ func HandleSendGuildChannelForum(client callapi.Client, api openapi.OpenAPI, api
 // }
 
 // GenerateForumMessage 生成帖子消息
-func GenerateForumMessage(foundItems map[string][]string, messageText string) (*dto.FourmToCreate, error) {
+func GenerateForumMessage(foundItems map[string][]string, messageText string, apiv2 openapi.OpenAPI) (*dto.FourmToCreate, error) {
 	var forum dto.FourmToCreate
 
 	// 设置标题
@@ -231,7 +266,7 @@ func GenerateForumMessage(foundItems map[string][]string, messageText string) (*
 			mylog.Printf("Error compressing image: %v", err)
 			return nil, fmt.Errorf("error compressing image: %v", err)
 		}
-		imageURL, err := images.UploadBase64ImageToServer(base64.StdEncoding.EncodeToString(compressedData))
+		imageURL, _, _, _, err := images.UploadBase64ImageToServer("", base64.StdEncoding.EncodeToString(compressedData), "", apiv2)
 		if err != nil {
 			mylog.Printf("failed to upload base64 image: %v", err)
 			return nil, fmt.Errorf("failed to upload base64 image: %v", err)

@@ -24,8 +24,12 @@ func (p *Processors) ProcessGroupMessage(data *dto.WSGroupATMessageData) error {
 	// 转换appid
 	AppIDString := strconv.FormatUint(p.Settings.AppID, 10)
 
-	// 构造echo
-	echostr := AppIDString + "_" + strconv.FormatInt(s, 10)
+	// 获取当前时间的13位毫秒级时间戳
+	currentTimeMillis := time.Now().UnixNano() / 1e6
+
+	// 构造echostr，包括AppID，原始的s变量和当前时间戳
+	echostr := fmt.Sprintf("%s_%d_%d", AppIDString, s, currentTimeMillis)
+
 	var userid64 int64
 	var GroupID64 int64
 	var err error
@@ -51,7 +55,7 @@ func (p *Processors) ProcessGroupMessage(data *dto.WSGroupATMessageData) error {
 		// 映射str的GroupID到int
 		GroupID64, err = idmap.StoreIDv2(data.GroupID)
 		if err != nil {
-			mylog.Errorf("failed to convert ChannelID to int: %v", err)
+			mylog.Errorf("failed to convert GroupID64 to int: %v", err)
 			return nil
 		}
 		// 映射str的userid到int
@@ -122,11 +126,9 @@ func (p *Processors) ProcessGroupMessage(data *dto.WSGroupATMessageData) error {
 		groupMsg.RealMessageType = "group"
 		groupMsg.IsBindedUserId = IsBindedUserId
 		groupMsg.IsBindedGroupId = IsBindedGroupId
-		if IsBindedUserId {
-			groupMsg.Avatar, _ = GenerateAvatarURL(userid64)
-		} else {
-			groupMsg.Avatar, _ = GenerateAvatarURLV2(data.Author.ID)
-		}
+		groupMsg.RealGroupID = data.GroupID
+		groupMsg.RealUserID = data.Author.ID
+		groupMsg.Avatar, _ = GenerateAvatarURLV2(data.Author.ID)
 	}
 	//根据条件判断是否增加nick和card
 	var CaN = config.GetCardAndNick()

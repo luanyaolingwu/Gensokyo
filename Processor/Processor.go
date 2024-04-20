@@ -91,6 +91,8 @@ type OnebotGroupMessage struct {
 	Font            int         `json:"font"`
 	UserID          int64       `json:"user_id"`
 	RealMessageType string      `json:"real_message_type,omitempty"`  //当前信息的真实类型 group group_private guild guild_private
+	RealUserID      string      `json:"real_user_id,omitempty"`       //当前真实uid
+	RealGroupID     string      `json:"real_group_id,omitempty"`      //当前真实gid
 	IsBindedGroupId bool        `json:"is_binded_group_id,omitempty"` //当前群号是否是binded后的
 	IsBindedUserId  bool        `json:"is_binded_user_id,omitempty"`  //当前用户号号是否是binded后的
 }
@@ -344,21 +346,23 @@ func (p *Processors) HandleFrameworkCommand(messageText string, data interface{}
 
 	// 获取MasterID数组
 	masterIDs := config.GetMasterID()
-	// 根据realid获取new(用户id)
-	now, new, err = idmap.RetrieveVirtualValuev2(realid)
-	if err != nil {
-		mylog.Printf("根据realid获取new(用户id) 错误:%v", err)
-	}
-	// 根据realid获取new(群id)
-	nowgroup, newgroup, err = idmap.RetrieveVirtualValuev2(realid2)
-	if err != nil {
-		mylog.Printf("根据realid获取new(群id)错误:%v", err)
-	}
+
 	// idmaps-pro获取群和用户id
 	if config.GetIdmapPro() {
 		newpro1, newpro2, err = idmap.RetrieveVirtualValuev2Pro(realid2, realid)
 		if err != nil {
 			mylog.Printf("idmaps-pro获取群和用户id 错误:%v", err)
+		}
+	} else {
+		// 根据realid获取new(用户id)
+		now, new, err = idmap.RetrieveVirtualValuev2(realid)
+		if err != nil {
+			mylog.Printf("根据realid获取new(用户id) 错误:%v", err)
+		}
+		// 根据realid获取new(群id)
+		nowgroup, newgroup, err = idmap.RetrieveVirtualValuev2(realid2)
+		if err != nil {
+			mylog.Printf("根据realid获取new(群id)错误:%v", err)
 		}
 	}
 	// 检查真实值或虚拟值是否在数组中

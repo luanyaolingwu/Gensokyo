@@ -1,25 +1,47 @@
 package httpapi
 
 import (
+	"fmt"
 	"net/http"
+	"reflect"
 	"strconv"
+	"strings"
+
+	"github.com/hoshinonyaruko/gensokyo/config"
+	"github.com/hoshinonyaruko/gensokyo/handlers"
 
 	"github.com/gin-gonic/gin"
 	"github.com/hoshinonyaruko/gensokyo/callapi"
-	"github.com/hoshinonyaruko/gensokyo/handlers"
 	"github.com/tencent-connect/botgo/openapi"
 )
 
 // CombinedMiddleware 创建并返回一个带有依赖的中间件闭包
 func CombinedMiddleware(api openapi.OpenAPI, apiV2 openapi.OpenAPI) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		accessToken := config.GetHTTPAccessToken()
+		if accessToken != "" {
+			tokenHeader := strings.Replace(c.GetHeader("Authorization"), "Bearer ", "", 1)
+			tokenQuery, _ := c.GetQuery("access_token")
+			if (tokenHeader == "" || tokenHeader != accessToken) && (tokenQuery == "" || tokenQuery != accessToken) {
+				c.JSON(http.StatusForbidden, gin.H{"error": "鉴权失败"})
+				return
+			}
+		}
 		// 检查路径和处理对应的请求
 		if c.Request.URL.Path == "/send_group_msg" {
 			handleSendGroupMessage(c, api, apiV2)
 			return
 		}
+		if c.Request.URL.Path == "/send_group_msg_raw" {
+			handleSendGroupMessageRaw(c, api, apiV2)
+			return
+		}
 		if c.Request.URL.Path == "/send_private_msg" {
 			handleSendPrivateMessage(c, api, apiV2)
+			return
+		}
+		if c.Request.URL.Path == "/send_private_msg_sse" {
+			handleSendPrivateMessageSSE(c, api, apiV2)
 			return
 		}
 		if c.Request.URL.Path == "/send_guild_channel_msg" {
@@ -30,8 +52,16 @@ func CombinedMiddleware(api openapi.OpenAPI, apiV2 openapi.OpenAPI) gin.HandlerF
 			handleGetGroupList(c, api, apiV2)
 			return
 		}
+		if c.Request.URL.Path == "/get_friend_list" {
+			handleGetFriendList(c, api, apiV2)
+			return
+		}
 		if c.Request.URL.Path == "/put_interaction" {
 			handlePutInteraction(c, api, apiV2)
+			return
+		}
+		if c.Request.URL.Path == "/delete_msg" {
+			handleDeleteMsg(c, api, apiV2)
 			return
 		}
 
@@ -91,6 +121,59 @@ func handleSendGroupMessage(c *gin.Context, api openapi.OpenAPI, apiV2 openapi.O
 	c.String(http.StatusOK, retmsg)
 }
 
+// handleSendGroupMessageRaw 处理发送群聊消息的请求
+func handleSendGroupMessageRaw(c *gin.Context, api openapi.OpenAPI, apiV2 openapi.OpenAPI) {
+	var retmsg string
+	var req struct {
+		GroupID    int64  `json:"group_id" form:"group_id"`
+		MessageID  string `json:"message_id" form:"message_id"`
+		UserID     *int64 `json:"user_id,omitempty" form:"user_id"`
+		Message    string `json:"message" form:"message"`
+		AutoEscape bool   `json:"auto_escape" form:"auto_escape"`
+	}
+
+	// 根据请求方法解析参数
+	if c.Request.Method == http.MethodGet {
+		// 从URL查询参数解析
+		if err := c.ShouldBindQuery(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	} else {
+		// 从JSON或表单数据解析
+		if err := c.ShouldBind(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
+	// 使用解析后的参数处理请求
+	client := &HttpAPIClient{}
+	// 创建 ActionMessage 实例
+	message := callapi.ActionMessage{
+		Action: "send_group_msg_raw",
+		Params: callapi.ParamsContent{
+			GroupID:   strconv.FormatInt(req.GroupID, 10), // 注意这里需要转换类型，因为 GroupID 是 int64
+			MessageID: req.MessageID,
+			Message:   req.Message,
+		},
+	}
+	// 如果 UserID 存在，则加入到参数中
+	if req.UserID != nil {
+		message.Params.UserID = strconv.FormatInt(*req.UserID, 10)
+	}
+	// 调用处理函数
+	retmsg, err := handlers.HandleSendGroupMsgRaw(client, api, apiV2, message)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 返回处理结果
+	c.Header("Content-Type", "application/json")
+	c.String(http.StatusOK, retmsg)
+}
+
 // handleSendPrivateMessage 处理发送私聊消息的请求
 func handleSendPrivateMessage(c *gin.Context, api openapi.OpenAPI, apiV2 openapi.OpenAPI) {
 	var retmsg string
@@ -131,6 +214,55 @@ func handleSendPrivateMessage(c *gin.Context, api openapi.OpenAPI, apiV2 openapi
 	}
 	// 调用处理函数
 	retmsg, err := handlers.HandleSendPrivateMsg(client, api, apiV2, message)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 返回处理结果
+	c.Header("Content-Type", "application/json")
+	c.String(http.StatusOK, retmsg)
+}
+
+// handleSendPrivateMessageSSE 处理发送私聊SSE消息的请求
+func handleSendPrivateMessageSSE(c *gin.Context, api openapi.OpenAPI, apiV2 openapi.OpenAPI) {
+	var retmsg string
+	var req struct {
+		GroupID    int64       `json:"group_id" form:"group_id"`
+		UserID     int64       `json:"user_id" form:"user_id"`
+		Message    interface{} `json:"message" form:"message"`
+		AutoEscape bool        `json:"auto_escape" form:"auto_escape"`
+	}
+
+	// 根据请求方法解析参数
+	if c.Request.Method == http.MethodGet {
+		// 从URL查询参数解析
+		if err := c.ShouldBindQuery(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	} else {
+		// 从JSON或表单数据解析
+		if err := c.ShouldBind(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
+	// 使用解析后的参数处理请求
+	// 例如：api.SendGroupMessage(req.GroupID, req.Message, req.AutoEscape)
+	client := &HttpAPIClient{}
+	// 创建 ActionMessage 实例
+	message := callapi.ActionMessage{
+		Action: "send_private_msg_sse",
+		Params: callapi.ParamsContent{
+			GroupID: strconv.FormatInt(req.GroupID, 10), // 注意这里需要转换类型，因为 GroupID 是 int64
+			UserID:  strconv.FormatInt(req.UserID, 10),
+			Message: req.Message,
+		},
+	}
+	// 调用处理函数
+	retmsg, err := handlers.HandleSendPrivateMsgSSE(client, api, apiV2, message)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -229,6 +361,29 @@ func handleGetGroupList(c *gin.Context, api openapi.OpenAPI, apiV2 openapi.OpenA
 	c.String(http.StatusOK, retmsg)
 }
 
+// handleGetFriendList 处理获取好友列表
+func handleGetFriendList(c *gin.Context, api openapi.OpenAPI, apiV2 openapi.OpenAPI) {
+	var retmsg string
+
+	// 使用解析后的参数处理请求
+	client := &HttpAPIClient{}
+	// 创建 ActionMessage 实例
+	message := callapi.ActionMessage{
+		Action: "get_friend_list",
+	}
+
+	// 调用处理函数
+	retmsg, err := handlers.HandleGetFriendList(client, api, apiV2, message)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 返回处理结果
+	c.Header("Content-Type", "application/json")
+	c.String(http.StatusOK, retmsg)
+}
+
 // handlePutInteraction 处理put_interaction的请求
 func handlePutInteraction(c *gin.Context, api openapi.OpenAPI, apiV2 openapi.OpenAPI) {
 	var req struct {
@@ -269,4 +424,74 @@ func handlePutInteraction(c *gin.Context, api openapi.OpenAPI, apiV2 openapi.Ope
 	// 返回处理结果
 	c.Header("Content-Type", "application/json")
 	c.String(http.StatusOK, retmsg)
+}
+
+// 类型转换函数，将interface{}转换为string
+func convertToString(value interface{}) string {
+	switch v := value.(type) {
+	case int:
+		return strconv.Itoa(v)
+	case int64:
+		return strconv.FormatInt(v, 10)
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case string:
+		return v
+	default:
+		fmt.Println("Unexpected type:", reflect.TypeOf(value))
+		return ""
+	}
+}
+
+func handleDeleteMsg(c *gin.Context, api openapi.OpenAPI, apiV2 openapi.OpenAPI) {
+	// 使用interface{}以适应不同类型的输入，接受动态参数类型
+	var req struct {
+		UserID    interface{} `json:"user_id,omitempty" form:"user_id"`
+		GroupID   interface{} `json:"group_id,omitempty" form:"group_id"`
+		ChannelID interface{} `json:"channel_id,omitempty" form:"channel_id"`
+		GuildID   interface{} `json:"guild_id,omitempty" form:"guild_id"`
+		MessageID interface{} `json:"message_id" form:"message_id"`
+	}
+
+	// 解析请求参数
+	if err := c.ShouldBind(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 构造参数内容，只包括实际有值的字段
+	params := callapi.ParamsContent{}
+
+	if req.UserID != nil {
+		params.UserID = convertToString(req.UserID)
+	}
+	if req.GroupID != nil {
+		params.GroupID = convertToString(req.GroupID)
+	}
+	if req.ChannelID != nil {
+		params.ChannelID = convertToString(req.ChannelID)
+	}
+	if req.GuildID != nil {
+		params.GuildID = convertToString(req.GuildID)
+	}
+	if req.MessageID != nil {
+		params.MessageID = convertToString(req.MessageID)
+	}
+
+	// 创建 ActionMessage 实例
+	message := callapi.ActionMessage{
+		Action: "delete_msg",
+		Params: params,
+	}
+
+	// 调用处理函数，假设 handlers.DeleteMsg 已经实现并且适合处理消息删除的操作
+	client := &HttpAPIClient{}
+	retmsg, err := handlers.DeleteMsg(client, api, apiV2, message)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 返回处理结果
+	c.JSON(http.StatusOK, gin.H{"message": retmsg})
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/hoshinonyaruko/gensokyo/handlers"
 	"github.com/hoshinonyaruko/gensokyo/idmap"
 	"github.com/hoshinonyaruko/gensokyo/mylog"
+	"github.com/hoshinonyaruko/gensokyo/structs"
 	"github.com/tencent-connect/botgo/dto"
 	"github.com/tencent-connect/botgo/websocket/client"
 )
@@ -34,7 +35,10 @@ func (p *Processors) ProcessC2CMessage(data *dto.WSC2CMessageData) error {
 
 		//转换appidstring
 		AppIDString := strconv.FormatUint(p.Settings.AppID, 10)
-		echostr := AppIDString + "_" + strconv.FormatInt(s, 10)
+		// 获取当前时间的13位毫秒级时间戳
+		currentTimeMillis := time.Now().UnixNano() / 1e6
+		// 构造echostr，包括AppID，原始的s变量和当前时间戳
+		echostr := fmt.Sprintf("%s_%d_%d", AppIDString, s, currentTimeMillis)
 		var userid64 int64
 		var err error
 		if config.GetIdmapPro() {
@@ -143,13 +147,24 @@ func (p *Processors) ProcessC2CMessage(data *dto.WSC2CMessageData) error {
 		privateMsgMap := structToMap(privateMsg)
 		//上报信息到onebotv11应用端(正反ws)
 		p.BroadcastMessageToAll(privateMsgMap)
+		//组合FriendData
+		struserid := strconv.FormatInt(userid64, 10)
+		userdata := structs.FriendData{
+			Nickname: "",
+			Remark:   "",
+			UserID:   struserid,
+		}
+		//缓存私信好友列表
+		idmap.StoreUserInfo(data.Author.ID, userdata)
 	} else {
 		//将私聊信息转化为群信息(特殊需求情况下)
 
 		//转换appid
 		AppIDString := strconv.FormatUint(p.Settings.AppID, 10)
-		//构造echo
-		echostr := AppIDString + "_" + strconv.FormatInt(s, 10)
+		// 获取当前时间的13位毫秒级时间戳
+		currentTimeMillis := time.Now().UnixNano() / 1e6
+		// 构造echostr，包括AppID，原始的s变量和当前时间戳
+		echostr := fmt.Sprintf("%s_%d_%d", AppIDString, s, currentTimeMillis)
 		//把userid作为群号
 		//映射str的userid到int
 		var userid64 int64
@@ -262,6 +277,17 @@ func (p *Processors) ProcessC2CMessage(data *dto.WSC2CMessageData) error {
 		groupMsgMap := structToMap(groupMsg)
 		//上报信息到onebotv11应用端(正反ws)
 		p.BroadcastMessageToAll(groupMsgMap)
+
+		//组合FriendData
+		struserid := strconv.FormatInt(userid64, 10)
+		userdata := structs.FriendData{
+			Nickname: "",
+			Remark:   "",
+			UserID:   struserid,
+		}
+		//缓存私信好友列表
+		idmap.StoreUserInfo(data.Author.ID, userdata)
 	}
+
 	return nil
 }

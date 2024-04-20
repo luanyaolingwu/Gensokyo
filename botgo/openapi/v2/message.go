@@ -175,6 +175,36 @@ func (o *openAPIv2) RetractMessage(ctx context.Context,
 	return err
 }
 
+// RetractMessage 撤回群消息
+func (o *openAPIv2) RetractGroupMessage(ctx context.Context,
+	groupID, msgID string, options ...openapi.RetractMessageOption) error {
+	request := o.request(ctx).
+		SetPathParam("group_id", groupID).
+		SetPathParam("message_id", string(msgID))
+	for _, option := range options {
+		if option == openapi.RetractMessageOptionHidetip {
+			request = request.SetQueryParam("hidetip", "true")
+		}
+	}
+	_, err := request.Delete(o.getURL(groupMessagesURL))
+	return err
+}
+
+// RetractMessage 撤回私聊消息
+func (o *openAPIv2) RetractC2CMessage(ctx context.Context,
+	UserID, msgID string, options ...openapi.RetractMessageOption) error {
+	request := o.request(ctx).
+		SetPathParam("user_id", UserID).
+		SetPathParam("message_id", string(msgID))
+	for _, option := range options {
+		if option == openapi.RetractMessageOptionHidetip {
+			request = request.SetQueryParam("hidetip", "true")
+		}
+	}
+	_, err := request.Delete(o.getURL(c2cMessageURI))
+	return err
+}
+
 // PostSettingGuide 发送设置引导消息, atUserID为要at的用户
 func (o *openAPIv2) PostSettingGuide(ctx context.Context,
 	channelID string, atUserIDs []string) (*dto.Message, error) {
@@ -282,6 +312,27 @@ func (o *openAPIv2) PostC2CMessage(ctx context.Context, userID string, msg dto.A
 	default:
 		result.Message = resp.Result().(*dto.Message)
 	}
+
+	return result, nil
+}
+
+// PostC2CMessage 回复C2CSSE消息
+func (o *openAPIv2) PostC2CMessageSSE(ctx context.Context, userID string, msg dto.APIMessage) (*dto.C2CMessageResponse, error) {
+	var resp *resty.Response
+	var err error
+
+	resp, err = o.request(ctx).
+		SetResult(dto.Message{}). // 设置为消息类型
+		SetPathParam("user_id", userID).
+		SetBody(msg).
+		Post(o.getURL("/v2/users/{user_id}/messages"))
+
+	if err != nil {
+		return nil, err
+	}
+
+	result := &dto.C2CMessageResponse{}
+	result.Message = resp.Result().(*dto.Message)
 
 	return result, nil
 }

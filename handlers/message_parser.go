@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoshinonyaruko/gensokyo/botstats"
 	"github.com/hoshinonyaruko/gensokyo/callapi"
 	"github.com/hoshinonyaruko/gensokyo/config"
 	"github.com/hoshinonyaruko/gensokyo/echo"
@@ -40,18 +41,336 @@ type ServerResponse struct {
 	Data struct {
 		MessageID int `json:"message_id"`
 	} `json:"data"`
-	Message string      `json:"message"`
-	RetCode int         `json:"retcode"`
-	Status  string      `json:"status"`
-	Echo    interface{} `json:"echo"`
+	Message   string      `json:"message"`
+	GroupID   int64       `json:"group_id,omitempty"`
+	UserID    int64       `json:"user_id,omitempty"`
+	ChannelID int64       `json:"channel_id,omitempty"`
+	GuildID   string      `json:"guild_id,omitempty"`
+	RetCode   int         `json:"retcode"`
+	Status    string      `json:"status"`
+	Echo      interface{} `json:"echo"`
+}
+
+// 定义了一个符合 Client 接口的 HttpAPIClient 结构体
+type HttpAPIClient struct {
+	// 可添加所需字段
+}
+
+// 实现 Client 接口的 SendMessage 方法
+// 假client中不执行任何操作，只是返回 nil 来符合接口要求
+func (c *HttpAPIClient) SendMessage(message map[string]interface{}) error {
+	// 不实际发送消息
+	// log.Printf("SendMessage called with: %v", message)
+
+	// 返回nil占位符
+	return nil
+}
+
+// 发送成功回执 todo 返回可互转的messageid 实现群撤回api
+func SendResponse(client callapi.Client, err error, message *callapi.ActionMessage, resp *dto.GroupMessageResponse, api openapi.OpenAPI, apiv2 openapi.OpenAPI) (string, error) {
+	var messageID64 int64
+	var mapErr error
+
+	// 转换群号
+	var errr error
+	var GroupID64 int64
+	if groupID, ok := message.Params.GroupID.(string); ok && groupID != "" {
+		if config.GetIdmapPro() {
+			//将真实id转为int userid64
+			GroupID64, _, errr = idmap.StoreIDv2Pro(message.Params.GroupID.(string), message.Params.UserID.(string))
+			if errr != nil {
+				mylog.Fatalf("Error storing ID: %v", err)
+			}
+		} else {
+			// 映射str的GroupID到int
+			GroupID64, errr = idmap.StoreIDv2(message.Params.GroupID.(string))
+			if errr != nil {
+				mylog.Errorf("failed to convert GroupID64 to int: %v", err)
+			}
+		}
+	}
+
+	var channelID64 int64
+	if channelID, ok := message.Params.ChannelID.(string); ok && channelID != "" {
+		if config.GetIdmapPro() {
+			//将真实id转为int userid64
+			channelID64, _, errr = idmap.StoreIDv2Pro(message.Params.ChannelID.(string), message.Params.UserID.(string))
+			if errr != nil {
+				mylog.Fatalf("Error storing ID: %v", err)
+			}
+		} else {
+			// 映射str的GroupID到int
+			channelID64, errr = idmap.StoreIDv2(message.Params.ChannelID.(string))
+			if errr != nil {
+				mylog.Errorf("failed to convert GroupID64 to int: %v", err)
+			}
+		}
+	}
+
+	var guildID64 int64
+	if guildID, ok := message.Params.GuildID.(string); ok && guildID != "" {
+		if config.GetIdmapPro() {
+			//将真实id转为int userid64
+			guildID64, _, errr = idmap.StoreIDv2Pro(message.Params.GuildID.(string), message.Params.UserID.(string))
+			if errr != nil {
+				mylog.Fatalf("Error storing ID: %v", err)
+			}
+		} else {
+			// 映射str的GroupID到int
+			guildID64, errr = idmap.StoreIDv2(message.Params.GuildID.(string))
+			if errr != nil {
+				mylog.Errorf("failed to convert GroupID64 to int: %v", err)
+			}
+		}
+	}
+
+	var userID64 int64
+	if userID, ok := message.Params.UserID.(string); ok && userID != "" {
+		if config.GetIdmapPro() {
+			//将真实id转为int userid64
+			userID64, _, errr = idmap.StoreIDv2Pro("group_private", message.Params.UserID.(string))
+			if errr != nil {
+				mylog.Fatalf("Error storing ID: %v", err)
+			}
+		} else {
+			// 映射str的GroupID到int
+			userID64, errr = idmap.StoreIDv2(message.Params.UserID.(string))
+			if errr != nil {
+				mylog.Errorf("failed to convert GroupID64 to int: %v", err)
+			}
+		}
+	}
+
+	// 设置响应值
+	response := ServerResponse{}
+	if resp != nil {
+		messageID64, mapErr = idmap.StoreIDv2(resp.Message.ID)
+		if mapErr != nil {
+			mylog.Printf("Error storing ID: %v", mapErr)
+			return "", nil
+		}
+		response.Data.MessageID = int(messageID64)
+		// 发送成功 增加今日发信息数
+		botstats.RecordMessageSent()
+		//  是否自动撤回
+		if echoStr, ok := message.Echo.(string); ok {
+			msg_on_touch := echo.GetMsgIDv3(config.GetAppIDStr(), echoStr)
+			// 检查是否需要自动撤回
+			autoWithdrawPrefixes := config.GetAutoWithdraw()
+			if len(autoWithdrawPrefixes) > 0 {
+				for _, prefix := range autoWithdrawPrefixes {
+					if strings.HasPrefix(msg_on_touch, prefix) {
+						go func() {
+							delay := config.GetAutoWithdrawTime() // 获取延迟时间
+							time.Sleep(time.Duration(delay) * time.Second)
+
+							// 构建参数
+							var params callapi.ParamsContent
+							if groupID, ok := message.Params.GroupID.(string); ok && groupID != "" {
+								params.GroupID = strconv.FormatInt(GroupID64, 10)
+							} else if channelID, ok := message.Params.ChannelID.(string); ok && channelID != "" {
+								params.ChannelID = strconv.FormatInt(channelID64, 10)
+							} else if guildID, ok := message.Params.GuildID.(string); ok && guildID != "" {
+								params.GuildID = strconv.FormatInt(guildID64, 10)
+							} else if userID, ok := message.Params.UserID.(string); ok && userID != "" {
+								params.UserID = strconv.FormatInt(userID64, 10)
+							} else {
+								return // 如果没有有效的参数，则退出
+							}
+							params.MessageID = strconv.FormatInt(messageID64, 10)
+
+							// 创建撤回消息的请求
+							deleteMessage := callapi.ActionMessage{
+								Action: "delete_msg",
+								Params: params,
+							}
+
+							// 调用删除消息函数
+							client := &HttpAPIClient{}
+							_, err := DeleteMsg(client, api, apiv2, deleteMessage)
+							if err != nil {
+								mylog.Printf("Error DeleteMsg: %v", err)
+							}
+						}()
+						break
+					}
+				}
+			}
+		}
+	} else {
+		// Default ID handling
+		response.Data.MessageID = 123
+	}
+
+	//mylog.Printf("convert GroupID64 to int: %v", GroupID64) 测试
+	// TODO: 改为动态参数 不是固定GroupID 但应用端不支持.会报错.暂时统一从group取id,自己判断类型发撤回请求.
+	response.GroupID = GroupID64
+	response.Echo = message.Echo
+	if err != nil {
+		response.Message = err.Error() // 可选：在响应中添加错误消息
+		//response.RetCode = -1          // 可以是任何非零值，表示出错
+		//response.Status = "failed"
+		response.RetCode = 0 //官方api审核异步的 审核中默认返回失败,但其实信息发送成功了
+		response.Status = "ok"
+	} else {
+		response.Message = ""
+		response.RetCode = 0
+		response.Status = "ok"
+	}
+
+	// 转化为map并发送
+	outputMap := structToMap(response)
+	// 将map转换为JSON字符串
+	jsonResponse, jsonErr := json.Marshal(outputMap)
+	if jsonErr != nil {
+		log.Printf("Error marshaling response to JSON: %v", jsonErr)
+		return "", jsonErr
+	}
+	//发送给ws 客户端
+	sendErr := client.SendMessage(outputMap)
+	if sendErr != nil {
+		mylog.Printf("Error sending message via client: %v", sendErr)
+		return "", sendErr
+	}
+
+	mylog.Printf("发送成功回执: %+v", string(jsonResponse))
+	return string(jsonResponse), nil
 }
 
 // 发送成功回执 todo 返回可互转的messageid 实现频道撤回api
-func SendResponse(client callapi.Client, err error, message *callapi.ActionMessage) (string, error) {
+func SendGuildResponse(client callapi.Client, err error, message *callapi.ActionMessage, resp *dto.Message) (string, error) {
+	var messageID64 int64
+	var mapErr error
 	// 设置响应值
 	response := ServerResponse{}
-	response.Data.MessageID = 123 // todo 实现messageid转换
+	if resp != nil {
+		messageID64, mapErr = idmap.StoreIDv2(resp.ID)
+		if mapErr != nil {
+			mylog.Printf("Error storing ID: %v", mapErr)
+			return "", nil
+		}
+		response.Data.MessageID = int(messageID64)
+		// 发送成功 增加今日发信息数
+		botstats.RecordMessageSent()
+	} else {
+		// Default ID handling
+		response.Data.MessageID = 123
+	}
+	//转换成int
+	ChannelID64, errr := idmap.StoreIDv2(message.Params.ChannelID.(string))
+	if errr != nil {
+		mylog.Printf("Error storing ID: %v", err)
+		return "", nil
+	}
+	response.ChannelID = ChannelID64
 	response.Echo = message.Echo
+	if err != nil {
+		response.Message = err.Error() // 可选：在响应中添加错误消息
+		//response.RetCode = -1          // 可以是任何非零值，表示出错
+		//response.Status = "failed"
+		response.RetCode = 0 //官方api审核异步的 审核中默认返回失败,但其实信息发送成功了
+		response.Status = "ok"
+	} else {
+		response.Message = ""
+		response.RetCode = 0
+		response.Status = "ok"
+	}
+
+	// 转化为map并发送
+	outputMap := structToMap(response)
+	// 将map转换为JSON字符串
+	jsonResponse, jsonErr := json.Marshal(outputMap)
+	if jsonErr != nil {
+		log.Printf("Error marshaling response to JSON: %v", jsonErr)
+		return "", jsonErr
+	}
+	//发送给ws 客户端
+	sendErr := client.SendMessage(outputMap)
+	if sendErr != nil {
+		mylog.Printf("Error sending message via client: %v", sendErr)
+		return "", sendErr
+	}
+
+	mylog.Printf("发送成功回执: %+v", string(jsonResponse))
+	return string(jsonResponse), nil
+}
+
+// 发送成功回执 todo 返回可互转的messageid 实现C2C撤回api
+func SendC2CResponse(client callapi.Client, err error, message *callapi.ActionMessage, resp *dto.C2CMessageResponse) (string, error) {
+	var messageID64 int64
+	var mapErr error
+	// 设置响应值
+	response := ServerResponse{}
+	if resp != nil {
+		messageID64, mapErr = idmap.StoreIDv2(resp.Message.ID)
+		if mapErr != nil {
+			mylog.Printf("Error storing ID: %v", mapErr)
+			return "", nil
+		}
+		response.Data.MessageID = int(messageID64)
+		// 发送成功 增加今日发信息数
+		botstats.RecordMessageSent()
+	} else {
+		// Default ID handling
+		response.Data.MessageID = 123
+	}
+	//将真实id转为int userid64
+	userid64, errr := idmap.StoreIDv2(message.Params.UserID.(string))
+	if errr != nil {
+		mylog.Fatalf("Error storing ID: %v", err)
+	}
+	response.UserID = userid64
+	response.Echo = message.Echo
+	if err != nil {
+		response.Message = err.Error() // 可选：在响应中添加错误消息
+		//response.RetCode = -1          // 可以是任何非零值，表示出错
+		//response.Status = "failed"
+		response.RetCode = 0 //官方api审核异步的 审核中默认返回失败,但其实信息发送成功了
+		response.Status = "ok"
+	} else {
+		response.Message = ""
+		response.RetCode = 0
+		response.Status = "ok"
+	}
+
+	// 转化为map并发送
+	outputMap := structToMap(response)
+	// 将map转换为JSON字符串
+	jsonResponse, jsonErr := json.Marshal(outputMap)
+	if jsonErr != nil {
+		log.Printf("Error marshaling response to JSON: %v", jsonErr)
+		return "", jsonErr
+	}
+	//发送给ws 客户端
+	sendErr := client.SendMessage(outputMap)
+	if sendErr != nil {
+		mylog.Printf("Error sending message via client: %v", sendErr)
+		return "", sendErr
+	}
+
+	mylog.Printf("发送成功回执: %+v", string(jsonResponse))
+	return string(jsonResponse), nil
+}
+
+// 会返回guildid的频道私信专用SendGuildPrivateResponse
+func SendGuildPrivateResponse(client callapi.Client, err error, message *callapi.ActionMessage, resp *dto.Message, guildID string) (string, error) {
+	var messageID64 int64
+	var mapErr error
+	// 设置响应值
+	response := ServerResponse{}
+	if resp != nil {
+		messageID64, mapErr = idmap.StoreIDv2(resp.ID)
+		if mapErr != nil {
+			mylog.Printf("Error storing ID: %v", mapErr)
+			return "", nil
+		}
+		response.Data.MessageID = int(messageID64)
+	} else {
+		// Default ID handling
+		response.Data.MessageID = 123
+	}
+	response.Echo = message.Echo
+	response.GuildID = guildID
 	if err != nil {
 		response.Message = err.Error() // 可选：在响应中添加错误消息
 		//response.RetCode = -1          // 可以是任何非零值，表示出错
@@ -1038,7 +1357,7 @@ func parseQQMuiscMDData(musicid string) (*dto.Markdown, *keyboard.MessageKeyboar
 		return nil, nil, errors.New("song not found")
 	}
 	albumMid := info.Get("track_info.album.mid").String()
-	pinfo, _ := FetchTrackInfo(info.Get("track_info.mid").Str)
+	//pinfo, _ := FetchTrackInfo(info.Get("track_info.mid").Str)
 	jumpURL := "https://i.y.qq.com/v8/playsong.html?platform=11&appshare=android_qq&appversion=10030010&hosteuin=oKnlNenz7i-s7c**&songmid=" + info.Get("track_info.mid").Str + "&type=0&appsongtype=1&_wv=1&source=qq&ADTAG=qfshare"
 	content := info.Get("track_info.singer.0.name").String()
 
@@ -1077,9 +1396,10 @@ func parseQQMuiscMDData(musicid string) (*dto.Markdown, *keyboard.MessageKeyboar
 		Params:           mdParams,
 	}
 	// 使用gjson获取musicUrl
-	musicUrl := gjson.Get(pinfo, "url_mid.data.midurlinfo.0.purl").String()
+	//musicUrl := gjson.Get(pinfo, "url_mid.data.midurlinfo.0.purl").String()
 	// 处理 Keyboard
-	kb := createMusicKeyboard(jumpURL, musicUrl)
+	//kb := createMusicKeyboard(jumpURL, musicUrl)
+	kb := createMusicKeyboard(jumpURL)
 
 	return md, kb, nil
 }
@@ -1093,7 +1413,8 @@ func QQMusicSongInfo(id string) (gjson.Result, error) {
 	return gjson.Get(d, "songinfo.data"), nil
 }
 
-func createMusicKeyboard(jumpURL string, musicURL string) *keyboard.MessageKeyboard {
+// func createMusicKeyboard(jumpURL string, musicURL string) *keyboard.MessageKeyboard {
+func createMusicKeyboard(jumpURL string) *keyboard.MessageKeyboard {
 	// 初始化自定义键盘
 	customKeyboard := &keyboard.CustomKeyboard{}
 	currentRow := &keyboard.Row{} // 创建一个新行

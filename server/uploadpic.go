@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"crypto/md5"
 	"encoding/base64"
 	"encoding/hex"
@@ -21,7 +22,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/hoshinonyaruko/gensokyo/config"
 	"github.com/hoshinonyaruko/gensokyo/idmap"
+	"github.com/hoshinonyaruko/gensokyo/images"
 	"github.com/hoshinonyaruko/gensokyo/mylog"
+	"github.com/tencent-connect/botgo/dto"
+	"github.com/tencent-connect/botgo/openapi"
 )
 
 const (
@@ -122,6 +126,115 @@ func UploadBase64ImageHandler(rateLimiter *RateLimiter) gin.HandlerFunc {
 		}
 		c.JSON(http.StatusOK, gin.H{"url": imageURL})
 
+	}
+}
+func UploadBase64ImageHandlerV2(rateLimiter *RateLimiter, apiv2 openapi.OpenAPI) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ipAddress := c.ClientIP()
+		if !rateLimiter.CheckAndUpdateRateLimit(ipAddress) {
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "rate limit exceeded"})
+			return
+		}
+
+		// 从请求中获取必要的参数
+		base64Image := c.PostForm("base64Image")
+		imageUrl := c.PostForm("url") // 新增的url参数
+		msgid := c.DefaultPostForm("msgid", "")
+		groupID := c.PostForm("groupID")
+
+		if groupID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "groupID is required"})
+			return
+		}
+
+		var imageURL string
+		var groupid uint64
+		var width, height uint32
+		var err error
+
+		// 根据参数调用不同的处理逻辑
+		if base64Image != "" {
+			imageURL, groupid, width, height, err = images.UploadBase64ImageToServer(msgid, base64Image, groupID, apiv2)
+		} else if imageUrl != "" {
+			imageURL, groupid, width, height, err = images.TransferUrlToServerUrl(msgid, imageUrl, groupID, apiv2)
+		} else {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "either base64Image or url is required"})
+			return
+		}
+
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		// 如果上传成功，则返回图片的URL，群组ID，宽度和高度
+		c.JSON(http.StatusOK, gin.H{
+			"url":     imageURL,
+			"groupid": groupid,
+			"width":   width,
+			"height":  height,
+		})
+	}
+}
+
+func UploadBase64ImageHandlerV3(rateLimiter *RateLimiter, apiv1 openapi.OpenAPI) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ipAddress := c.ClientIP()
+		if !rateLimiter.CheckAndUpdateRateLimit(ipAddress) {
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "rate limit exceeded"})
+			return
+		}
+
+		base64Image := c.PostForm("base64Image")
+		channelID := c.PostForm("channelID")
+
+		if channelID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "channelID is required"})
+			return
+		}
+
+		fileImageData, err := base64.StdEncoding.DecodeString(base64Image)
+		if err != nil {
+			mylog.Printf("Base64 解码失败: %v", err)
+			return
+		}
+		// 压缩 只有设置了阈值才会压缩
+		compressedData, err := images.CompressSingleImage(fileImageData)
+		if err != nil {
+			mylog.Printf("Error compressing image: %v", err)
+			return
+		}
+
+		newMessage := &dto.MessageToCreate{
+			Content:   "",
+			MsgID:     "1000",
+			MsgType:   0,
+			Timestamp: time.Now().Unix(),
+		}
+
+		if _, err = apiv1.PostMessageMultipart(context.TODO(), channelID, newMessage, compressedData); err != nil {
+			mylog.Printf("使用multipart发送图文信息失败: %v message_id %v", err, 1000)
+			return
+		}
+
+		// 计算压缩数据的MD5值
+		md5Hash := md5.Sum(compressedData)
+		md5String := strings.ToUpper(hex.EncodeToString(md5Hash[:]))
+		imageURL := fmt.Sprintf("https://gchat.qpic.cn/qmeetpic/0/0-0-%s/0", md5String)
+
+		// 获取图片宽高
+		height, width, err := images.GetImageDimensions(imageURL)
+		if err != nil {
+			mylog.Printf("获取图片宽高出错: %v", err)
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"url":       imageURL,
+			"channelID": channelID,
+			"width":     width,
+			"height":    height,
+		})
 	}
 }
 

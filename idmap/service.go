@@ -16,9 +16,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/boltdb/bolt"
 	"github.com/hoshinonyaruko/gensokyo/config"
 	"github.com/hoshinonyaruko/gensokyo/mylog"
+	"github.com/hoshinonyaruko/gensokyo/structs"
+	"go.etcd.io/bbolt"
 )
 
 var (
@@ -29,27 +30,45 @@ var (
 )
 
 const (
-	DBName       = "idmap.db"
-	BucketName   = "ids"
-	ConfigBucket = "config"
-	CounterKey   = "currentRow"
+	DBName         = "idmap.db"
+	BucketName     = "ids"
+	ConfigBucket   = "config"
+	UserInfoBucket = "UserInfo"
+	CounterKey     = "currentRow"
 )
 
-var db *bolt.DB
+var db *bbolt.DB
 
 var ErrKeyNotFound = errors.New("key not found")
 
 func InitializeDB() {
 	var err error
-	db, err = bolt.Open(DBName, 0600, nil)
+	// 打开数据库文件
+	db, err = bbolt.Open(DBName, 0600, nil)
 	if err != nil {
 		log.Fatalf("Error opening DB: %v", err)
 	}
 
-	db.Update(func(tx *bolt.Tx) error {
-		_, err := tx.CreateBucketIfNotExists([]byte(BucketName))
-		return err
+	// 在数据库中创建必要的buckets
+	err = db.Update(func(tx *bbolt.Tx) error {
+		// 创建默认的Bucket
+		if _, err := tx.CreateBucketIfNotExists([]byte(BucketName)); err != nil {
+			return err
+		}
+		// 创建存储用户信息的Bucket
+		if _, err := tx.CreateBucketIfNotExists([]byte(UserInfoBucket)); err != nil {
+			return err
+		}
+		// 创建配置数据的Bucket
+		if _, err := tx.CreateBucketIfNotExists([]byte(ConfigBucket)); err != nil {
+			return err
+		}
+		return nil
 	})
+
+	if err != nil {
+		log.Fatalf("Error setting up buckets: %v", err)
+	}
 }
 
 func CloseDB() {
@@ -118,7 +137,7 @@ func CheckValuev2(value int64) bool {
 func StoreID(id string) (int64, error) {
 	var newRow int64
 
-	err := db.Update(func(tx *bolt.Tx) error {
+	err := db.Update(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(BucketName))
 
 		// 检查ID是否已经存在
@@ -140,22 +159,21 @@ func StoreID(id string) (int64, error) {
 		} else {
 			// 生成新的行号
 			var err error
-			newRow, err = GenerateRowID(id, 9)
-			if err != nil {
-				return err
-			}
-			// 检查新生成的行号是否重复
-			rowKey := fmt.Sprintf("row-%d", newRow)
-			if b.Get([]byte(rowKey)) != nil {
-				// 如果行号重复，使用10位数字生成行号
-				newRow, err = GenerateRowID(id, 10)
+			maxDigits := 18 // int64的位数上限-1
+			for digits := 9; digits <= maxDigits; digits++ {
+				newRow, err = GenerateRowID(id, digits)
 				if err != nil {
 					return err
 				}
-				rowKey = fmt.Sprintf("row-%d", newRow)
-				// 再次检查重复性，如果还是重复，则返回错误
-				if b.Get([]byte(rowKey)) != nil {
-					return fmt.Errorf("unable to find a unique row ID")
+				// 检查新生成的行号是否重复
+				rowKey := fmt.Sprintf("row-%d", newRow)
+				if b.Get([]byte(rowKey)) == nil {
+					// 找到了一个唯一的行号，可以跳出循环
+					break
+				}
+				// 如果到达了最大尝试次数还没有找到唯一的行号，则返回错误
+				if digits == maxDigits {
+					return fmt.Errorf("unable to find a unique row ID after %d attempts", maxDigits-8)
 				}
 			}
 		}
@@ -181,7 +199,7 @@ func StoreID(id string) (int64, error) {
 func SimplifiedStoreID(id string) (int64, error) {
 	var newRow int64
 
-	err := db.Update(func(tx *bolt.Tx) error {
+	err := db.Update(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(BucketName))
 
 		// 生成新的行号
@@ -217,7 +235,7 @@ func SimplifiedStoreID(id string) (int64, error) {
 
 // SimplifiedStoreID 根据a储存b 储存一半
 func SimplifiedStoreIDv2(id string) (int64, error) {
-	if config.GetLotusValue() {
+	if config.GetLotusValue() && !config.GetLotusWithoutIdmaps() {
 		// 使用网络请求方式
 		serverDir := config.GetServer_dir()
 		portValue := config.GetPortValue()
@@ -253,7 +271,7 @@ func SimplifiedStoreIDv2(id string) (int64, error) {
 		return int64(rowValue), nil
 	}
 
-	// 如果lotus为假,就保持原来的store的方法
+	// 如果lotus为假,或不走idmaps是真,就保持原来的store的方法
 	return SimplifiedStoreID(id)
 }
 
@@ -262,7 +280,7 @@ func StoreIDPro(id string, subid string) (int64, int64, error) {
 	var newRowID, newSubRowID int64
 	var err error
 
-	err = db.Update(func(tx *bolt.Tx) error {
+	err = db.Update(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(BucketName))
 
 		// 生成正向键
@@ -305,7 +323,7 @@ func StoreIDPro(id string, subid string) (int64, int64, error) {
 
 // StoreIDv2 根据a储存b
 func StoreIDv2(id string) (int64, error) {
-	if config.GetLotusValue() {
+	if config.GetLotusValue() && !config.GetLotusWithoutIdmaps() {
 		// 使用网络请求方式
 		serverDir := config.GetServer_dir()
 		portValue := config.GetPortValue()
@@ -347,7 +365,7 @@ func StoreIDv2(id string) (int64, error) {
 
 // 群号 然后 用户号
 func StoreIDv2Pro(id string, subid string) (int64, int64, error) {
-	if config.GetLotusValue() {
+	if config.GetLotusValue() && !config.GetLotusWithoutIdmaps() {
 		// 使用网络请求方式
 		serverDir := config.GetServer_dir()
 		portValue := config.GetPortValue()
@@ -395,7 +413,7 @@ func StoreIDv2Pro(id string, subid string) (int64, int64, error) {
 // 根据b得到a
 func RetrieveRowByID(rowid string) (string, error) {
 	var id string
-	err := db.View(func(tx *bolt.Tx) error {
+	err := db.View(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(BucketName))
 
 		// 根据行号检索ID
@@ -413,7 +431,7 @@ func RetrieveRowByID(rowid string) (string, error) {
 
 // 群号 然后 用户号
 func RetrieveRowByIDv2Pro(newRowID string, newSubRowID string) (string, string, error) {
-	if config.GetLotusValue() {
+	if config.GetLotusValue() && !config.GetLotusWithoutIdmaps() {
 		// 使用网络请求方式
 		serverDir := config.GetServer_dir()
 		portValue := config.GetPortValue()
@@ -462,7 +480,7 @@ func RetrieveRowByIDv2Pro(newRowID string, newSubRowID string) (string, string, 
 func RetrieveRowByIDPro(newRowID, newSubRowID string) (string, string, error) {
 	var id, subid string
 
-	err := db.View(func(tx *bolt.Tx) error {
+	err := db.View(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(BucketName))
 
 		// 根据新的行号和子行号检索ID和SubID
@@ -495,7 +513,7 @@ func RetrieveRowByIDv2(rowid string) (string, error) {
 		protocol = "https"
 	}
 
-	if config.GetLotusValue() {
+	if config.GetLotusValue() && !config.GetLotusWithoutIdmaps() {
 		// 使用网络请求方式
 		serverDir := config.GetServer_dir()
 
@@ -530,27 +548,27 @@ func RetrieveRowByIDv2(rowid string) (string, error) {
 
 // 根据a 以b为类别 储存c
 func WriteConfig(sectionName, keyName, value string) error {
-	return db.Update(func(tx *bolt.Tx) error {
-		b, err := tx.CreateBucketIfNotExists([]byte(ConfigBucket))
-		if err != nil {
-			mylog.Printf("Error creating or accessing bucket: %v", err)
-			return fmt.Errorf("failed to access or create bucket %s: %w", ConfigBucket, err)
+	return db.Update(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte(ConfigBucket)) // 直接获取bucket
+		if b == nil {
+			mylog.Printf("Bucket %s not found", ConfigBucket)
+			return fmt.Errorf("bucket %s not found", ConfigBucket)
 		}
 
 		key := joinSectionAndKey(sectionName, keyName)
-		err = b.Put(key, []byte(value))
+		err := b.Put(key, []byte(value))
 		if err != nil {
 			mylog.Printf("Error putting data into bucket with key %s: %v", key, err)
 			return fmt.Errorf("failed to put data into bucket with key %s: %w", key, err)
 		}
-		//mylog.Printf("Data saved successfully with key %s,value %s", key, value)
+		//log.Printf("Data saved successfully with key %s, value %s", key, value)
 		return nil
 	})
 }
 
 // WriteConfigv2 根据a以b为类别储存c
 func WriteConfigv2(sectionName, keyName, value string) error {
-	if config.GetLotusValue() {
+	if config.GetLotusValue() && !config.GetLotusWithoutIdmaps() {
 		// 使用网络请求方式
 		serverDir := config.GetServer_dir()
 		portValue := config.GetPortValue()
@@ -591,7 +609,7 @@ func WriteConfigv2(sectionName, keyName, value string) error {
 // 根据a和b取出c
 func ReadConfig(sectionName, keyName string) (string, error) {
 	var result string
-	err := db.View(func(tx *bolt.Tx) error {
+	err := db.View(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(ConfigBucket))
 		if b == nil {
 			return fmt.Errorf("bucket not found")
@@ -610,6 +628,65 @@ func ReadConfig(sectionName, keyName string) (string, error) {
 	return result, err
 }
 
+// DeleteConfig根据sectionName和keyName删除指定的键值对
+func DeleteConfig(sectionName, keyName string) error {
+	return db.Update(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte(ConfigBucket))
+		if b == nil {
+			return fmt.Errorf("bucket %s does not exist", ConfigBucket)
+		}
+
+		key := joinSectionAndKey(sectionName, keyName)
+		err := b.Delete(key)
+		if err != nil {
+			return fmt.Errorf("failed to delete data with key %s: %w", key, err)
+		}
+
+		return nil
+	})
+}
+
+// DeleteConfigv2 根据sectionName和keyName远程删除配置
+func DeleteConfigv2(sectionName, keyName string) error {
+	// 根据portValue确定协议
+	protocol := "http"
+	portValue := config.GetPortValue()
+	if portValue == "443" {
+		protocol = "https"
+	}
+
+	if config.GetLotusValue() && !config.GetLotusWithoutIdmaps() {
+		// 使用网络请求方式
+		serverDir := config.GetServer_dir()
+
+		// 构建请求URL和参数
+		baseURL := fmt.Sprintf("%s://%s:%s/getid", protocol, serverDir, portValue)
+		params := url.Values{}
+		params.Add("type", "15") // type 15是用于删除操作的
+		params.Add("id", sectionName)
+		params.Add("subtype", keyName)
+		url := baseURL + "?" + params.Encode()
+
+		resp, err := http.Get(url)
+		if err != nil {
+			return fmt.Errorf("failed to send request: %v", err)
+		}
+		defer resp.Body.Close()
+
+		// 如果HTTP状态码是200 OK，表示操作成功完成
+		if resp.StatusCode == http.StatusOK {
+			// 成功，可以返回nil或者根据需要返回具体的成功消息
+			return nil
+		} else {
+			// 如果状态码不是200 OK，返回错误信息
+			return fmt.Errorf("error response from server: %s", resp.Status)
+		}
+	}
+
+	// 如果lotus为假,则使用原始方法在本地删除配置
+	return DeleteConfig(sectionName, keyName) // 假设你已经有了一个本地删除的方法
+}
+
 // ReadConfigv2 根据a和b取出c
 func ReadConfigv2(sectionName, keyName string) (string, error) {
 	// 根据portValue确定协议
@@ -619,7 +696,7 @@ func ReadConfigv2(sectionName, keyName string) (string, error) {
 		protocol = "https"
 	}
 
-	if config.GetLotusValue() {
+	if config.GetLotusValue() && !config.GetLotusWithoutIdmaps() {
 		// 使用网络请求方式
 		serverDir := config.GetServer_dir()
 
@@ -669,7 +746,7 @@ func joinSectionAndKey(sectionName, keyName string) []byte {
 
 // UpdateVirtualValue 更新旧的虚拟值到新的虚拟值的映射
 func UpdateVirtualValue(oldRowValue, newRowValue int64) error {
-	return db.Update(func(tx *bolt.Tx) error {
+	return db.Update(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(BucketName))
 
 		// 查找旧虚拟值对应的真实值
@@ -708,7 +785,7 @@ func UpdateVirtualValue(oldRowValue, newRowValue int64) error {
 // RetrieveRealValue 根据虚拟值获取真实值，并返回虚拟值及其对应的真实值
 func RetrieveRealValue(virtualValue int64) (string, string, error) {
 	var realValue string
-	err := db.View(func(tx *bolt.Tx) error {
+	err := db.View(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(BucketName))
 
 		// 构造键，根据虚拟值查找
@@ -733,7 +810,7 @@ func RetrieveRealValue(virtualValue int64) (string, string, error) {
 // RetrieveVirtualValue 根据真实值获取虚拟值，并返回真实值及其对应的虚拟值
 func RetrieveVirtualValue(realValue string) (string, string, error) {
 	var virtualValue int64
-	err := db.View(func(tx *bolt.Tx) error {
+	err := db.View(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(BucketName))
 
 		// 根据真实值查找虚拟值
@@ -756,7 +833,7 @@ func RetrieveVirtualValue(realValue string) (string, string, error) {
 
 // 更新真实值对应的虚拟值
 func UpdateVirtualValuev2(oldRowValue, newRowValue int64) error {
-	if config.GetLotusValue() {
+	if config.GetLotusValue() && !config.GetLotusWithoutIdmaps() {
 		// 构建请求URL
 		serverDir := config.GetServer_dir()
 		portValue := config.GetPortValue()
@@ -783,7 +860,7 @@ func UpdateVirtualValuev2(oldRowValue, newRowValue int64) error {
 
 // RetrieveRealValuev2 根据虚拟值获取真实值
 func RetrieveRealValuev2(virtualValue int64) (string, string, error) {
-	if config.GetLotusValue() {
+	if config.GetLotusValue() && !config.GetLotusWithoutIdmaps() {
 		serverDir := config.GetServer_dir()
 		portValue := config.GetPortValue()
 		protocol := "http"
@@ -818,7 +895,7 @@ func RetrieveRealValuev2(virtualValue int64) (string, string, error) {
 
 // RetrieveVirtualValuev2 根据真实值获取虚拟值
 func RetrieveVirtualValuev2(realValue string) (string, string, error) {
-	if config.GetLotusValue() {
+	if config.GetLotusValue() && !config.GetLotusWithoutIdmaps() {
 		// 使用网络请求方式
 		serverDir := config.GetServer_dir()
 		portValue := config.GetPortValue()
@@ -860,7 +937,7 @@ func RetrieveVirtualValuev2(realValue string) (string, string, error) {
 
 // 根据2个真实值 获取2个虚拟值 群号 然后 用户号
 func RetrieveVirtualValuev2Pro(realValue string, realValueSub string) (string, string, error) {
-	if config.GetLotusValue() {
+	if config.GetLotusValue() && !config.GetLotusWithoutIdmaps() {
 		// 使用网络请求方式
 		serverDir := config.GetServer_dir()
 		portValue := config.GetPortValue()
@@ -909,7 +986,7 @@ func RetrieveVirtualValuev2Pro(realValue string, realValueSub string) (string, s
 func RetrieveVirtualValuePro(realValue string, realValueSub string) (string, string, error) {
 	var newRowID, newSubRowID string
 
-	err := db.View(func(tx *bolt.Tx) error {
+	err := db.View(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(BucketName))
 
 		// 构建正向键
@@ -943,7 +1020,7 @@ func RetrieveVirtualValuePro(realValue string, realValueSub string) (string, str
 func RetrieveRealValuePro(virtualValue1, virtualValue2 int64) (string, string, error) {
 	var realValue1, realValue2 string
 
-	err := db.View(func(tx *bolt.Tx) error {
+	err := db.View(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(BucketName))
 
 		// 根据两个虚拟值构造键
@@ -974,7 +1051,7 @@ func RetrieveRealValuePro(virtualValue1, virtualValue2 int64) (string, string, e
 
 // RetrieveRealValuesv2Pro 根据两个虚拟值获取两个真实值 群号 然后 用户号
 func RetrieveRealValuesv2Pro(virtualValue int64, virtualValueSub int64) (string, string, error) {
-	if config.GetLotusValue() {
+	if config.GetLotusValue() && !config.GetLotusWithoutIdmaps() {
 		// 使用网络请求方式
 		serverDir := config.GetServer_dir()
 		portValue := config.GetPortValue()
@@ -1021,7 +1098,7 @@ func RetrieveRealValuesv2Pro(virtualValue int64, virtualValueSub int64) (string,
 
 // UpdateVirtualValuePro 更新一对旧虚拟值到新虚拟值的映射 旧群号 新群号 旧用户 新用户
 func UpdateVirtualValuePro(oldVirtualValue1, newVirtualValue1, oldVirtualValue2, newVirtualValue2 int64) error {
-	return db.Update(func(tx *bolt.Tx) error {
+	return db.Update(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(BucketName))
 		// 构造旧和新的复合键
 		oldCompositeKey := fmt.Sprintf("%d:%d", oldVirtualValue1, oldVirtualValue2)
@@ -1057,7 +1134,7 @@ func UpdateVirtualValuePro(oldVirtualValue1, newVirtualValue1, oldVirtualValue2,
 
 // UpdateVirtualValuev2Pro 根据配置更新两对虚拟值 旧群 新群 旧用户 新用户
 func UpdateVirtualValuev2Pro(oldVirtualValue1, newVirtualValue1, oldVirtualValue2, newVirtualValue2 int64) error {
-	if config.GetLotusValue() {
+	if config.GetLotusValue() && !config.GetLotusWithoutIdmaps() {
 		// 构建请求URL
 		serverDir := config.GetServer_dir()
 		portValue := config.GetPortValue()
@@ -1089,7 +1166,7 @@ func UpdateVirtualValuev2Pro(oldVirtualValue1, newVirtualValue1, oldVirtualValue
 func FindKeysBySubAndType(sub string, typeSuffix string) ([]string, error) {
 	var ids []string
 
-	err := db.View(func(tx *bolt.Tx) error {
+	err := db.View(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(ConfigBucket))
 		if b == nil {
 			return fmt.Errorf("bucket %s not found", ConfigBucket)
@@ -1120,7 +1197,7 @@ func FindKeysBySubAndType(sub string, typeSuffix string) ([]string, error) {
 func FindSubKeysById(id string) ([]string, error) {
 	var subKeys []string
 
-	err := db.View(func(tx *bolt.Tx) error {
+	err := db.View(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte("ids"))
 		if b == nil {
 			return fmt.Errorf("bucket %s not found", "ids")
@@ -1147,7 +1224,7 @@ func FindSubKeysById(id string) ([]string, error) {
 
 // FindSubKeysByIdPro 根据1个值获取key中的k:v给出k获取所有v，通过网络调用
 func FindSubKeysByIdPro(id string) ([]string, error) {
-	if config.GetLotusValue() {
+	if config.GetLotusValue() && !config.GetLotusWithoutIdmaps() {
 		// 使用网络请求方式
 		serverDir := config.GetServer_dir()
 		portValue := config.GetPortValue()
@@ -1199,7 +1276,7 @@ func FindSubKeysByIdPro(id string) ([]string, error) {
 
 // 场景: xxx:yyy zzz:bbb  zzz:bbb xxx:yyy 把xxx(id)替换为newID 比如更换群号(会卡住)
 func UpdateKeysWithNewID(id, newID string) error {
-	return db.Update(func(tx *bolt.Tx) error {
+	return db.Update(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(BucketName))
 		if b == nil {
 			return fmt.Errorf("bucket %s not found", BucketName)
@@ -1252,4 +1329,54 @@ func UpdateKeysWithNewID(id, newID string) error {
 
 		return nil
 	})
+}
+
+// StoreUserInfo 存储用户信息
+func StoreUserInfo(rawID string, userInfo structs.FriendData) error {
+	return db.Update(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte(UserInfoBucket))
+		key := fmt.Sprintf("%s:%s", rawID, userInfo.UserID) // 创建复合键
+		if v := b.Get([]byte(key)); v != nil {
+			return fmt.Errorf("duplicate key: %s", key)
+		}
+
+		// 序列化用户信息作为值
+		value, err := json.Marshal(userInfo)
+		if err != nil {
+			return fmt.Errorf("could not encode user info: %s", err)
+		}
+
+		// 存储键值对
+		if err := b.Put([]byte(key), value); err != nil {
+			return fmt.Errorf("could not store user info: %s", err)
+		}
+		return nil
+	})
+}
+
+// ListAllUsers 返回数据库中所有用户的信息
+func ListAllUsers() ([]structs.FriendData, error) {
+	var users []structs.FriendData
+	err := db.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte(UserInfoBucket))
+		if b == nil {
+			return fmt.Errorf("bucket %s not found", UserInfoBucket)
+		}
+
+		// 遍历bucket中的所有键值对
+		err := b.ForEach(func(key, value []byte) error {
+			var user structs.FriendData
+			if err := json.Unmarshal(value, &user); err != nil {
+				log.Printf("Error unmarshaling user data: %v", err)
+				return err
+			}
+			users = append(users, user)
+			return nil
+		})
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return users, nil
 }
