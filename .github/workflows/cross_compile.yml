@@ -37,12 +37,12 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v2
 
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v2
       with:
-        go-version: '1.22.2' # Set to specific Go version.
+        go-version: '1.21.1' # Set to specific Go version.
 
     - name: Set up Node.js
       uses: actions/setup-node@v4
@@ -50,7 +50,7 @@ jobs:
         node-version: '21' # 使用最新的 LTS 版本
 
     - name: Cache Node modules
-      uses: actions/cache@v4
+      uses: actions/cache@v2
       with:
         path: |
           frontend/node_modules
@@ -58,20 +58,17 @@ jobs:
         key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
         restore-keys: |
           ${{ runner.os }}-node-
-
     - name: Install Quasar CLI and dependencies
       run: |
         cd frontend
         npm install -g @quasar/cli
         npm install
-
     - name: Build Quasar Project
       run: |
         cd frontend
         quasar build
-
     - name: Cache Android NDK
-      uses: actions/cache@v4
+      uses: actions/cache@v2
       with:
         path: |
           ${{ github.workspace }}/android-ndk-r21e
@@ -85,7 +82,6 @@ jobs:
         unzip ndk.zip
         export ANDROID_NDK_HOME=$PWD/android-ndk-r21e
         echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> $GITHUB_ENV
-
     - name: Create output directory
       run: mkdir -p output
 
@@ -100,7 +96,6 @@ jobs:
         else
           go build -ldflags="-s -w" -o output/gensokyo-${{ matrix.os }}-${{ matrix.goarch }}
         fi
-
     - name: Compress executable files with UPX (except for gensokyo-android-arm64)
       run: |
         sudo apt-get update
@@ -115,7 +110,6 @@ jobs:
         else
           upx --best --lzma "$FILENAME"
         fi
-
     - name: Upload artifacts
       uses: actions/upload-artifact@v2
       with:
