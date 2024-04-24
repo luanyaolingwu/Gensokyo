@@ -958,7 +958,11 @@ func RevertTransformedText(data interface{}, msgtype string, api openapi.OpenAPI
 
 			//如果二级指令白名单全部是*(忽略自身,那么不判断二级白名单是否匹配)
 			if allStarPrefixed {
-				matched = true
+				if len(messageText) == len(matchedPrefix.Prefix) {
+					matched = true
+				} else {
+					matched = false
+				}
 			} else {
 				// 遍历白名单数组，检查是否有匹配项
 				for _, prefix := range allPrefixes {
@@ -974,8 +978,8 @@ func RevertTransformedText(data interface{}, msgtype string, api openapi.OpenAPI
 
 					// 从trimmedPrefix中去除前后空格(可能会有bug)
 					trimmedPrefix = strings.TrimSpace(trimmedPrefix)
-
-					if strings.HasPrefix(messageText, trimmedPrefix) {
+					// trimmedPrefix如果是""就会导致任意内容都是true,所以不能是""
+					if strings.HasPrefix(messageText, trimmedPrefix) && trimmedPrefix != "" {
 						matched = true
 						break
 					}
