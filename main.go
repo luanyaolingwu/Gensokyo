@@ -17,6 +17,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/hoshinonyaruko/gensokyo/Processor"
+	"github.com/hoshinonyaruko/gensokyo/acnode"
 	"github.com/hoshinonyaruko/gensokyo/botstats"
 	"github.com/hoshinonyaruko/gensokyo/config"
 	"github.com/hoshinonyaruko/gensokyo/handlers"
@@ -533,6 +534,12 @@ func ErrorNotifyHandler() event.ErrorNotifyHandler {
 func ATMessageEventHandler() event.ATMessageEventHandler {
 	return func(event *dto.WSPayload, data *dto.WSATMessageData) error {
 		botstats.RecordMessageReceived()
+		if config.GetEnableChangeWord() {
+			data.Content = acnode.CheckWordIN(data.Content)
+			if data.Author.Username != "" {
+				data.Author.Username = acnode.CheckWordIN(data.Author.Username)
+			}
+		}
 		return p.ProcessGuildATMessage(data)
 	}
 }
@@ -565,6 +572,12 @@ func MemberEventHandler() event.GuildMemberEventHandler {
 func DirectMessageHandler() event.DirectMessageEventHandler {
 	return func(event *dto.WSPayload, data *dto.WSDirectMessageData) error {
 		botstats.RecordMessageReceived()
+		if config.GetEnableChangeWord() {
+			data.Content = acnode.CheckWordIN(data.Content)
+			if data.Author.Username != "" {
+				data.Author.Username = acnode.CheckWordIN(data.Author.Username)
+			}
+		}
 		return p.ProcessChannelDirectMessage(data)
 	}
 }
@@ -573,6 +586,12 @@ func DirectMessageHandler() event.DirectMessageEventHandler {
 func CreateMessageHandler() event.MessageEventHandler {
 	return func(event *dto.WSPayload, data *dto.WSMessageData) error {
 		botstats.RecordMessageReceived()
+		if config.GetEnableChangeWord() {
+			data.Content = acnode.CheckWordIN(data.Content)
+			if data.Author.Username != "" {
+				data.Author.Username = acnode.CheckWordIN(data.Author.Username)
+			}
+		}
 		return p.ProcessGuildNormalMessage(data)
 	}
 }
@@ -597,6 +616,12 @@ func ThreadEventHandler() event.ThreadEventHandler {
 func GroupATMessageEventHandler() event.GroupATMessageEventHandler {
 	return func(event *dto.WSPayload, data *dto.WSGroupATMessageData) error {
 		botstats.RecordMessageReceived()
+		if config.GetEnableChangeWord() {
+			data.Content = acnode.CheckWordIN(data.Content)
+			if data.Author.Username != "" {
+				data.Author.Username = acnode.CheckWordIN(data.Author.Username)
+			}
+		}
 		return p.ProcessGroupMessage(data)
 	}
 }
@@ -605,6 +630,12 @@ func GroupATMessageEventHandler() event.GroupATMessageEventHandler {
 func C2CMessageEventHandler() event.C2CMessageEventHandler {
 	return func(event *dto.WSPayload, data *dto.WSC2CMessageData) error {
 		botstats.RecordMessageReceived()
+		if config.GetEnableChangeWord() {
+			data.Content = acnode.CheckWordIN(data.Content)
+			if data.Author.Username != "" {
+				data.Author.Username = acnode.CheckWordIN(data.Author.Username)
+			}
+		}
 		return p.ProcessC2CMessage(data)
 	}
 }
