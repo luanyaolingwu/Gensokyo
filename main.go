@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/fatih/color"
+	"github.com/fsnotify/fsnotify"
 	"github.com/hoshinonyaruko/gensokyo/Processor"
 	"github.com/hoshinonyaruko/gensokyo/acnode"
 	"github.com/hoshinonyaruko/gensokyo/botstats"
@@ -93,10 +94,14 @@ func main() {
 
 	// 主逻辑
 	// 加载配置
-	conf, err := config.LoadConfig("config.yml")
+	conf, err := config.LoadConfig("config.yml", false)
 	if err != nil {
 		log.Fatalf("error: %v", err)
 	}
+
+	// 配置热重载
+	go setupConfigWatcher("config.yml")
+
 	sys.SetTitle(conf.Settings.Title)
 	webuiURL := config.ComposeWebUIURL(conf.Settings.Lotus)     // 调用函数获取URL
 	webuiURLv2 := config.ComposeWebUIURLv2(conf.Settings.Lotus) // 调用函数获取URL
@@ -654,6 +659,20 @@ func GroupDelRobotEventHandler() event.GroupDelRobotEventHandler {
 	}
 }
 
+// GroupMsgRejectHandler 实现处理 群请求关闭机器人主动推送 事件的回调
+func GroupMsgRejectHandler() event.GroupMsgRejectHandler {
+	return func(event *dto.WSPayload, data *dto.GroupMsgRejectEvent) error {
+		return p.ProcessGroupMsgReject(data)
+	}
+}
+
+// GroupMsgReceiveHandler 实现处理 群请求开启机器人主动推送 事件的回调
+func GroupMsgReceiveHandler() event.GroupMsgReceiveHandler {
+	return func(event *dto.WSPayload, data *dto.GroupMsgReceiveEvent) error {
+		return p.ProcessGroupMsgRecive(data)
+	}
+}
+
 func getHandlerByName(handlerName string) (interface{}, bool) {
 	switch handlerName {
 	case "ReadyHandler": //连接成功
@@ -680,10 +699,14 @@ func getHandlerByName(handlerName string) (interface{}, bool) {
 		return GroupATMessageEventHandler(), true
 	case "C2CMessageEventHandler": //群私聊
 		return C2CMessageEventHandler(), true
-	case "GroupAddRobotEventHandler": //群私聊
+	case "GroupAddRobotEventHandler": //群添加机器人
 		return GroupAddRobotEventHandler(), true
-	case "GroupDelRobotEventHandler": //群私聊
+	case "GroupDelRobotEventHandler": //群删除机器人
 		return GroupDelRobotEventHandler(), true
+	case "GroupMsgRejectHandler": //群请求关闭机器人主动推送
+		return GroupMsgRejectHandler(), true
+	case "GroupMsgReceiveHandler": //群请求开启机器人主动推送
+		return GroupMsgReceiveHandler(), true
 	default:
 		log.Printf("Unknown handler: %s\n", handlerName)
 		return nil, false
@@ -698,4 +721,42 @@ func allEmpty(addresses []string) bool {
 		}
 	}
 	return true
+}
+
+func setupConfigWatcher(configFilePath string) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		log.Fatalf("Error setting up watcher: %v", err)
+	}
+
+	// 添加一个100毫秒的Debouncing
+	//fileLoader := &config.ConfigFileLoader{EventDelay: 100 * time.Millisecond}
+
+	// Start the goroutine to handle file system events.
+	go func() {
+		for {
+			select {
+			case event, ok := <-watcher.Events:
+				if !ok {
+					return // Exit if channel is closed.
+				}
+				if event.Op&fsnotify.Write == fsnotify.Write {
+					fmt.Println("检测到配置文件变动:", event.Name)
+					//fileLoader.LoadConfigF(configFilePath)
+					config.LoadConfig(configFilePath, true)
+				}
+			case err, ok := <-watcher.Errors:
+				if !ok {
+					return // Exit if channel is closed.
+				}
+				log.Println("Watcher error:", err)
+			}
+		}
+	}()
+
+	// Add the config file to the list of watched files.
+	err = watcher.Add(configFilePath)
+	if err != nil {
+		log.Fatalf("Error adding watcher: %v", err)
+	}
 }

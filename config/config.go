@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hoshinonyaruko/gensokyo/mylog"
+	"github.com/hoshinonyaruko/gensokyo/structs"
 	"github.com/hoshinonyaruko/gensokyo/sys"
 	"github.com/hoshinonyaruko/gensokyo/template"
 	"gopkg.in/yaml.v3"
@@ -23,179 +24,8 @@ var (
 )
 
 type Config struct {
-	Version  int      `yaml:"version"`
-	Settings Settings `yaml:"settings"`
-}
-type VisualPrefixConfig struct {
-	Prefix          string   `yaml:"prefix"`
-	WhiteList       []string `yaml:"whiteList"`
-	NoWhiteResponse string   `yaml:"No_White_Response"`
-}
-type Settings struct {
-	//反向ws设置
-	WsAddress           []string `yaml:"ws_address"`
-	WsToken             []string `yaml:"ws_token"`
-	ReconnecTimes       int      `yaml:"reconnect_times"`
-	HeartBeatInterval   int      `yaml:"heart_beat_interval"`
-	LaunchReconectTimes int      `yaml:"launch_reconnect_times"`
-	//基础配置
-	AppID        uint64 `yaml:"app_id"`
-	Uin          int64  `yaml:"uin"`
-	Token        string `yaml:"token"`
-	ClientSecret string `yaml:"client_secret"`
-	ShardCount   int    `yaml:"shard_count"`
-	ShardID      int    `yaml:"shard_id"`
-	UseUin       bool   `yaml:"use_uin"`
-	//事件订阅类
-	TextIntent []string `yaml:"text_intent"`
-	//转换类
-	GlobalChannelToGroup       bool `yaml:"global_channel_to_group"`
-	GlobalPrivateToChannel     bool `yaml:"global_private_to_channel"`
-	GlobalForumToChannel       bool `yaml:"global_forum_to_channel"`
-	GlobalInteractionToMessage bool `yaml:"global_interaction_to_message"`
-	HashID                     bool `yaml:"hash_id"`
-	IdmapPro                   bool `yaml:"idmap_pro"`
-	//gensokyo互联类
-	Server_dir         string `yaml:"server_dir"`
-	Port               string `yaml:"port"`
-	BackupPort         string `yaml:"backup_port"`
-	Lotus              bool   `yaml:"lotus"`
-	LotusPassword      string `yaml:"lotus_password"`
-	LotusWithoutIdmaps bool   `yaml:"lotus_without_idmaps"`
-	//增强配置
-	MasterID         []string `yaml:"master_id"`
-	RecordSampleRate int      `yaml:"record_sampleRate"`
-	RecordBitRate    int      `yaml:"record_bitRate"`
-	CardAndNick      string   `yaml:"card_nick"`
-	AutoBind         bool     `yaml:"auto_bind"`
-	//发图相关
-	OssType                 int      `yaml:"oss_type"`
-	ImageLimit              int      `yaml:"image_sizelimit"`
-	ImageLimitB             int      `yaml:"image_limit"`
-	GuildUrlImageToBase64   bool     `yaml:"guild_url_image_to_base64"`
-	UrlPicTransfer          bool     `yaml:"url_pic_transfer"`
-	ImgUpApiVtv2            bool     `yaml:"img_up_api_ntv2"`
-	UploadPicV2Base64       bool     `yaml:"uploadpicv2_b64"`
-	GlobalServerTempQQguild bool     `yaml:"global_server_temp_qqguild"`
-	ServerTempQQguild       string   `yaml:"server_temp_qqguild"`
-	ServerTempQQguildPool   []string `yaml:"server_temp_qqguild_pool"`
-	//正向ws设置
-	WsServerPath   string `yaml:"ws_server_path"`
-	EnableWsServer bool   `yaml:"enable_ws_server"`
-	WsServerToken  string `yaml:"ws_server_token"`
-	//ssl和链接转换类
-	IdentifyFile   bool    `yaml:"identify_file"`
-	IdentifyAppids []int64 `yaml:"identify_appids"`
-	Crt            string  `yaml:"crt"`
-	Key            string  `yaml:"key"`
-	//日志类
-	DeveloperLog bool `yaml:"developer_log"`
-	LogLevel     int  `yaml:"log_level"`
-	SaveLogs     bool `yaml:"save_logs"`
-	//webui相关
-	DisableWebui bool   `yaml:"disable_webui"`
-	Username     string `yaml:"server_user_name"`
-	Password     string `yaml:"server_user_password"`
-	//指令魔法类
-	RemovePrefix        bool                 `yaml:"remove_prefix"`
-	RemoveAt            bool                 `yaml:"remove_at"`
-	RemoveBotAtGroup    bool                 `yaml:"remove_bot_at_group"`
-	AddAtGroup          bool                 `yaml:"add_at_group"`
-	WhitePrefixMode     bool                 `yaml:"white_prefix_mode"`
-	VwhitePrefixMode    bool                 `yaml:"v_white_prefix_mode"`
-	WhitePrefixs        []string             `yaml:"white_prefixs"`
-	WhiteBypass         []int64              `yaml:"white_bypass"`
-	WhiteEnable         []bool               `yaml:"white_enable"`
-	WhiteBypassRevers   bool                 `yaml:"white_bypass_reverse"`
-	NoWhiteResponse     string               `yaml:"No_White_Response"`
-	BlackPrefixMode     bool                 `yaml:"black_prefix_mode"`
-	BlackPrefixs        []string             `yaml:"black_prefixs"`
-	Alias               []string             `yaml:"alias"`
-	Enters              []string             `yaml:"enters"`
-	EntersExcept        []string             `yaml:"enters_except"`
-	VisualPrefixs       []VisualPrefixConfig `yaml:"visual_prefixs"`
-	AutoWithdraw        []string             `yaml:"auto_withdraw"`
-	AutoWithdrawTime    int                  `yaml:"auto_withdraw_time"`
-	VisualPrefixsBypass []string             `yaml:"visual_prefixs_bypass"`
-	//开发增强类
-	DevlopAcDir string `yaml:"develop_access_token_dir"`
-	DevBotid    string `yaml:"develop_bot_id"`
-	SandBoxMode bool   `yaml:"sandbox_mode"`
-	DevMessgeID bool   `yaml:"dev_message_id"`
-	SendError   bool   `yaml:"send_error"`
-	//增长营销类
-	SelfIntroduce []string `yaml:"self_introduce"`
-	//api修改
-	GetGroupListAllGuilds    bool   `yaml:"get_g_list_all_guilds"`
-	GetGroupListGuilds       string `yaml:"get_g_list_guilds"`
-	GetGroupListReturnGuilds bool   `yaml:"get_g_list_return_guilds"`
-	GetGroupListGuidsType    int    `yaml:"get_g_list_guilds_type"`
-	GetGroupListDelay        int    `yaml:"get_g_list_delay"`
-	ForwardMsgLimit          int    `yaml:"forward_msg_limit"`
-	CustomBotName            string `yaml:"custom_bot_name"`
-	TransFormApiIds          bool   `yaml:"transform_api_ids"`
-	AutoPutInteraction       bool   `yaml:"auto_put_interaction"`
-	PutInteractionDelay      int    `yaml:"put_interaction_delay"`
-	//onebot修改
-	TwoWayEcho bool `yaml:"twoway_echo"`
-	Array      bool `yaml:"array"`
-	NativeOb11 bool `yaml:"native_ob11"`
-	//url相关
-	VisibleIp    bool `yaml:"visible_ip"`
-	UrlToQrimage bool `yaml:"url_to_qrimage"`
-	QrSize       int  `yaml:"qr_size"`
-	TransferUrl  bool `yaml:"transfer_url"`
-	//框架修改
-	Title   string `yaml:"title"`
-	FrpPort string `yaml:"frp_port"`
-	//MD相关
-	CustomTemplateID string `yaml:"custom_template_id"`
-	KeyBoardID       string `yaml:"keyboard_id"`
-	//发送行为修改
-	LazyMessageId     bool   `yaml:"lazy_message_id"`
-	RamDomSeq         bool   `yaml:"ramdom_seq"`
-	BotForumTitle     string `yaml:"bot_forum_title"`
-	AtoPCount         int    `yaml:"AMsgRetryAsPMsg_Count"`
-	SendDelay         int    `yaml:"send_delay"`
-	EnableChangeWord  bool   `yaml:"enableChangeWord"`
-	DefaultChangeWord string `yaml:"defaultChangeWord"`
-	//错误临时修复类
-	Fix11300 bool `yaml:"fix_11300"`
-	//内置指令
-	BindPrefix   string   `yaml:"bind_prefix"`
-	MePrefix     string   `yaml:"me_prefix"`
-	UnlockPrefix string   `yaml:"unlock_prefix"`
-	LinkPrefix   string   `yaml:"link_prefix"`
-	MusicPrefix  string   `yaml:"music_prefix"`
-	LinkBots     []string `yaml:"link_bots"`
-	LinkText     string   `yaml:"link_text"`
-	LinkPic      string   `yaml:"link_pic"`
-	//HTTP API配置
-	HttpAddress         string   `yaml:"http_address"`
-	AccessToken         string   `yaml:"http_access_token"`
-	HttpVersion         int      `yaml:"http_version"`
-	HttpTimeOut         int      `yaml:"http_timeout"`
-	PostUrl             []string `yaml:"post_url"`
-	PostSecret          []string `yaml:"post_secret"`
-	PostMaxRetries      []int    `yaml:"post_max_retries"`
-	PostRetriesInterval []int    `yaml:"post_retries_interval"`
-	//腾讯云
-	TencentBucketName   string `yaml:"t_COS_BUCKETNAME"`
-	TencentBucketRegion string `yaml:"t_COS_REGION"`
-	TencentCosSecretid  string `yaml:"t_COS_SECRETID"`
-	TencentSecretKey    string `yaml:"t_COS_SECRETKEY"`
-	TencentAudit        bool   `yaml:"t_audit"`
-	//百度云
-	BaiduBOSBucketName string `yaml:"b_BOS_BUCKETNAME"`
-	BaiduBCEAK         string `yaml:"b_BCE_AK"`
-	BaiduBCESK         string `yaml:"b_BCE_SK"`
-	BaiduAudit         int    `yaml:"b_audit"`
-	//阿里云
-	AliyunEndpoint        string `yaml:"a_OSS_EndPoint"`
-	AliyunAccessKeyId     string `yaml:"a_OSS_AccessKeyId"`
-	AliyunAccessKeySecret string `yaml:"a_OSS_AccessKeySecret"`
-	AliyunBucketName      string `yaml:"a_OSS_BucketName"`
-	AliyunAudit           bool   `yaml:"a_audit"`
+	Version  int              `yaml:"version"`
+	Settings structs.Settings `yaml:"settings"`
 }
 
 // CommentInfo 用于存储注释及其定位信息
@@ -205,45 +35,139 @@ type CommentBlock struct {
 	Offset    int      // 注释与目标键之间的行数
 }
 
+// 不支持配置热重载的配置项
+var restartRequiredFields = []string{
+	"WsAddress", "WsToken", "ReconnectTimes", "HeartBeatInterval", "LaunchReconnectTimes",
+	"AppID", "Uin", "Token", "ClientSecret", "ShardCount", "ShardID", "UseUin",
+	"TextIntent",
+	"ServerDir", "Port", "BackupPort", "Lotus", "LotusPassword", "LotusWithoutIdmaps",
+	"WsServerPath", "EnableWsServer", "WsServerToken",
+	"IdentifyFile", "IdentifyAppids", "Crt", "Key",
+	"DeveloperLog", "LogLevel", "SaveLogs",
+	"DisableWebui", "Username", "Password",
+	"Title", // 继续检查和增加
+}
+
 // LoadConfig 从文件中加载配置并初始化单例配置
-func LoadConfig(path string) (*Config, error) {
+func LoadConfig(path string, fastload bool) (*Config, error) {
 	mu.Lock()
 	defer mu.Unlock()
-
-	// 如果单例已经被初始化了，直接返回
-	if instance != nil {
-		return instance, nil
-	}
 
 	configData, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	//todo remove it 破坏性变更的擦屁股代码
-	var ischange bool
-	configData, ischange = replaceVisualPrefixsLine(configData)
-	if ischange {
-		err = os.WriteFile(path, configData, 0644)
-		if err != nil {
-			// 处理写入错误
+
+	// 检查并替换视觉前缀行，如果有必要，后期会注释
+	// var isChange bool
+	// configData, isChange = replaceVisualPrefixsLine(configData)
+	// if isChange {
+	// 	// 如果配置文件已修改，重新写入修正后的数据
+	// 	if err = os.WriteFile(path, configData, 0644); err != nil {
+	// 		return nil, err // 处理写入错误
+	// 	}
+	// }
+
+	// 尝试解析配置数据
+	conf := &Config{}
+	if err = yaml.Unmarshal(configData, conf); err != nil {
+		return nil, err
+	}
+
+	if !fastload {
+		// 确保本地配置文件的完整性,添加新的字段
+		if err = ensureConfigComplete(path); err != nil {
 			return nil, err
 		}
-	}
-	//mylog.Printf("dev_ischange:%v", ischange)
-	conf := &Config{}
-	err = yaml.Unmarshal(configData, conf)
-	if err != nil {
-		return nil, err
+	} else {
+		if isValidConfig(conf) {
+			//log.Printf("instance.Settings：%v", instance.Settings)
+			// 用现有的instance比对即将覆盖赋值的conf,用[]string返回配置发生了变化的配置项
+			changedFields := compareConfigChanges("Settings", instance.Settings, conf.Settings)
+			// 根据changedFields进行进一步的操作，在不支持热重载的字段实现自动重启
+			if len(changedFields) > 0 {
+				log.Printf("配置已变更的字段：%v", changedFields)
+				checkForRestart(changedFields) // 检查变更字段是否需要重启
+			}
+		} //conf为空时不对比
 	}
 
-	// 确保配置完整性
-	if err := ensureConfigComplete(path); err != nil {
-		return nil, err
+	// 更新单例实例，即使它已经存在 更新前检查是否有效,vscode对文件的更新行为会触发2次文件变动
+	// 第一次会让configData为空,迅速的第二次才是正常有值的configData
+	if isValidConfig(conf) {
+		instance = conf
 	}
 
-	// 设置单例实例
-	instance = conf
 	return instance, nil
+}
+
+func isValidConfig(conf *Config) bool {
+	// 确认config不为空且必要字段已设置
+	return conf != nil && conf.Version != 0
+}
+
+// 去除Settings前缀
+func stripSettingsPrefix(fieldName string) string {
+	return strings.TrimPrefix(fieldName, "Settings.")
+}
+
+// compareConfigChanges 检查并返回发生变化的配置字段，处理嵌套结构体
+func compareConfigChanges(prefix string, oldConfig interface{}, newConfig interface{}) []string {
+	var changedFields []string
+
+	oldVal := reflect.ValueOf(oldConfig)
+	newVal := reflect.ValueOf(newConfig)
+
+	// 解引用指针
+	if oldVal.Kind() == reflect.Ptr {
+		oldVal = oldVal.Elem()
+	}
+	if newVal.Kind() == reflect.Ptr {
+		newVal = newVal.Elem()
+	}
+
+	// 遍历所有字段
+	for i := 0; i < oldVal.NumField(); i++ {
+		oldField := oldVal.Field(i)
+		newField := newVal.Field(i)
+		fieldType := oldVal.Type().Field(i)
+		fieldName := fieldType.Name
+
+		fullFieldName := fieldName
+		if prefix != "" {
+			fullFieldName = fmt.Sprintf("%s.%s", prefix, fieldName)
+		}
+
+		// 对于结构体字段递归比较
+		if oldField.Kind() == reflect.Struct || newField.Kind() == reflect.Struct {
+			subChanges := compareConfigChanges(fullFieldName, oldField.Interface(), newField.Interface())
+			changedFields = append(changedFields, subChanges...)
+		} else {
+			// 打印将要比较的字段和它们的值
+			//fmt.Printf("Comparing field: %s\nOld value: %v\nNew value: %v\n", fullFieldName, oldField.Interface(), newField.Interface())
+			if !reflect.DeepEqual(oldField.Interface(), newField.Interface()) {
+				//fmt.Println("-> Field changed")
+				// 去除Settings前缀后添加到变更字段列表
+				changedField := stripSettingsPrefix(fullFieldName)
+				changedFields = append(changedFields, changedField)
+			}
+		}
+	}
+
+	return changedFields
+}
+
+// 检查是否需要重启
+func checkForRestart(changedFields []string) {
+	for _, field := range changedFields {
+		for _, restartField := range restartRequiredFields {
+			if field == restartField {
+				fmt.Println("Configuration change requires restart:", field)
+				sys.RestartApplication() // 调用重启函数
+				return
+			}
+		}
+	}
 }
 
 func CreateAndWriteConfigTemp() error {
@@ -798,13 +722,13 @@ func GetVisibleIP() bool {
 }
 
 // 修改 GetVisualkPrefixs 函数以返回新类型
-func GetVisualkPrefixs() []VisualPrefixConfig {
+func GetVisualkPrefixs() []structs.VisualPrefixConfig {
 	mu.Lock()
 	defer mu.Unlock()
 	if instance != nil {
-		var varvisualPrefixes []VisualPrefixConfig
+		var varvisualPrefixes []structs.VisualPrefixConfig
 		for _, vp := range instance.Settings.VisualPrefixs {
-			varvisualPrefixes = append(varvisualPrefixes, VisualPrefixConfig{
+			varvisualPrefixes = append(varvisualPrefixes, structs.VisualPrefixConfig{
 				Prefix:          vp.Prefix,
 				WhiteList:       vp.WhiteList,
 				NoWhiteResponse: vp.NoWhiteResponse,
@@ -1596,46 +1520,46 @@ func GetQrSize() int {
 	return instance.Settings.QrSize
 }
 
-func replaceVisualPrefixsLine(configData []byte) ([]byte, bool) {
-	// 定义新的 visual_prefixs 部分
-	newVisualPrefixs := `  visual_prefixs :                  #虚拟前缀 与white_prefixs配合使用 处理流程自动忽略该前缀 remove_prefix remove_at 需为true时生效
-  - prefix: ""                      #虚拟前缀开头 例 你有3个指令 帮助 测试 查询 将 prefix 设置为 工具类 后 则可通过 工具类 帮助 触发机器人
-    whiteList: [""]                 #开关状态取决于 white_prefix_mode 为每一个二级指令头设计独立的白名单
-    No_White_Response : "" 
-  - prefix: ""
-    whiteList: [""]
-    No_White_Response : "" 
-  - prefix: ""
-    whiteList: [""]
-    No_White_Response : "" `
+// func replaceVisualPrefixsLine(configData []byte) ([]byte, bool) {
+// 	// 定义新的 visual_prefixs 部分
+// 	newVisualPrefixs := `  visual_prefixs :                  #虚拟前缀 与white_prefixs配合使用 处理流程自动忽略该前缀 remove_prefix remove_at 需为true时生效
+//   - prefix: ""                      #虚拟前缀开头 例 你有3个指令 帮助 测试 查询 将 prefix 设置为 工具类 后 则可通过 工具类 帮助 触发机器人
+//     whiteList: [""]                 #开关状态取决于 white_prefix_mode 为每一个二级指令头设计独立的白名单
+//     No_White_Response : ""
+//   - prefix: ""
+//     whiteList: [""]
+//     No_White_Response : ""
+//   - prefix: ""
+//     whiteList: [""]
+//     No_White_Response : "" `
 
-	// 将 byte 数组转换为字符串
-	configStr := string(configData)
+// 	// 将 byte 数组转换为字符串
+// 	configStr := string(configData)
 
-	// 按行分割 configStr
-	lines := strings.Split(configStr, "\n")
+// 	// 按行分割 configStr
+// 	lines := strings.Split(configStr, "\n")
 
-	// 创建一个新的字符串构建器
-	var newConfigData strings.Builder
+// 	// 创建一个新的字符串构建器
+// 	var newConfigData strings.Builder
 
-	// 标记是否进行了替换
-	replaced := false
+// 	// 标记是否进行了替换
+// 	replaced := false
 
-	// 遍历所有行
-	for _, line := range lines {
-		// 检查是否是 visual_prefixs 开头的行
-		if strings.HasPrefix(strings.TrimSpace(line), "visual_prefixs : [") {
-			// 替换为新的 visual_prefixs 部分
-			newConfigData.WriteString(newVisualPrefixs + "\n")
-			replaced = true
-			continue // 跳过原有行
-		}
-		newConfigData.WriteString(line + "\n")
-	}
+// 	// 遍历所有行
+// 	for _, line := range lines {
+// 		// 检查是否是 visual_prefixs 开头的行
+// 		if strings.HasPrefix(strings.TrimSpace(line), "visual_prefixs : [") {
+// 			// 替换为新的 visual_prefixs 部分
+// 			newConfigData.WriteString(newVisualPrefixs + "\n")
+// 			replaced = true
+// 			continue // 跳过原有行
+// 		}
+// 		newConfigData.WriteString(line + "\n")
+// 	}
 
-	// 返回新配置和是否发生了替换的标记
-	return []byte(newConfigData.String()), replaced
-}
+// 	// 返回新配置和是否发生了替换的标记
+// 	return []byte(newConfigData.String()), replaced
+// }
 
 // 获取GetWhiteBypassRevers的值
 func GetWhiteBypassRevers() bool {
@@ -2125,18 +2049,6 @@ func GetPutInteractionDelay() int {
 	return instance.Settings.PutInteractionDelay
 }
 
-// 获取ntv2转换开关
-func GetImgUpApiVtv2() bool {
-	mu.Lock()
-	defer mu.Unlock()
-
-	if instance == nil {
-		mylog.Println("Warning: instance is nil when trying to ImgUpApiVtv2 value.")
-		return false
-	}
-	return instance.Settings.ImgUpApiVtv2
-}
-
 // 获取Fix11300开关
 func GetFix11300() bool {
 	mu.Lock()
@@ -2311,4 +2223,60 @@ func GetEnableChangeWord() bool {
 		return false
 	}
 	return instance.Settings.EnableChangeWord
+}
+
+// 获取GlobalGroupMsgRejectReciveEventToMessage状态
+func GetGlobalGroupMsgRejectReciveEventToMessage() bool {
+	mu.Lock()
+	defer mu.Unlock()
+
+	if instance == nil {
+		mylog.Println("Warning: instance is nil when trying to GlobalGroupMsgRejectReciveEventToMessage.")
+		return false
+	}
+	return instance.Settings.GlobalGroupMsgRejectReciveEventToMessage
+}
+
+// 获取GlobalGroupMsgRejectMessage
+func GetGlobalGroupMsgRejectMessage() string {
+	mu.Lock()
+	defer mu.Unlock()
+	if instance != nil {
+		return instance.Settings.GlobalGroupMsgRejectMessage
+	}
+	return ""
+}
+
+// 获取GlobalGroupMsgRejectMessage
+func GetGlobalGroupMsgReceiveMessage() string {
+	mu.Lock()
+	defer mu.Unlock()
+	if instance != nil {
+		return instance.Settings.GlobalGroupMsgReceiveMessage
+	}
+	return ""
+}
+
+// 获取EntersAsBlock状态
+func GetEntersAsBlock() bool {
+	mu.Lock()
+	defer mu.Unlock()
+
+	if instance == nil {
+		mylog.Println("Warning: instance is nil when trying to EntersAsBlock.")
+		return false
+	}
+	return instance.Settings.EntersAsBlock
+}
+
+// 获取NativeMD状态
+func GetNativeMD() bool {
+	mu.Lock()
+	defer mu.Unlock()
+
+	if instance == nil {
+		mylog.Println("Warning: instance is nil when trying to NativeMD.")
+		return false
+	}
+	return instance.Settings.NativeMD
 }

@@ -25,6 +25,7 @@ import (
 	"github.com/hoshinonyaruko/gensokyo/idmap"
 	"github.com/hoshinonyaruko/gensokyo/images"
 	"github.com/hoshinonyaruko/gensokyo/mylog"
+	"github.com/hoshinonyaruko/gensokyo/structs"
 	"github.com/hoshinonyaruko/gensokyo/wsclient"
 	"github.com/tencent-connect/botgo/dto"
 	"github.com/tencent-connect/botgo/dto/keyboard"
@@ -35,7 +36,7 @@ import (
 type Processors struct {
 	Api             openapi.OpenAPI                   // API 类型
 	Apiv2           openapi.OpenAPI                   //群的API
-	Settings        *config.Settings                  // 使用指针
+	Settings        *structs.Settings                 // 使用指针
 	Wsclient        []*wsclient.WebSocketClient       // 指针的切片
 	WsServerClients []callapi.WebSocketServerClienter //ws server被连接的客户端
 }
@@ -129,6 +130,30 @@ type OnebotInteractionNotice struct {
 	Data       *dto.WSInteractionData `json:"data,omitempty"`
 }
 
+// onebotv11标准扩展
+type OnebotGroupRejectNotice struct {
+	GroupID    int64                    `json:"group_id,omitempty"`
+	NoticeType string                   `json:"notice_type,omitempty"`
+	PostType   string                   `json:"post_type,omitempty"`
+	SelfID     int64                    `json:"self_id,omitempty"`
+	SubType    string                   `json:"sub_type,omitempty"`
+	Time       int64                    `json:"time,omitempty"`
+	UserID     int64                    `json:"user_id,omitempty"`
+	Data       *dto.GroupMsgRejectEvent `json:"data,omitempty"`
+}
+
+// onebotv11标准扩展
+type OnebotGroupReceiveNotice struct {
+	GroupID    int64                     `json:"group_id,omitempty"`
+	NoticeType string                    `json:"notice_type,omitempty"`
+	PostType   string                    `json:"post_type,omitempty"`
+	SelfID     int64                     `json:"self_id,omitempty"`
+	SubType    string                    `json:"sub_type,omitempty"`
+	Time       int64                     `json:"time,omitempty"`
+	UserID     int64                     `json:"user_id,omitempty"`
+	Data       *dto.GroupMsgReceiveEvent `json:"data,omitempty"`
+}
+
 type PrivateSender struct {
 	Nickname string `json:"nickname"`
 	UserID   int64  `json:"user_id"` // Can be either string or int depending on logic
@@ -168,7 +193,7 @@ func structToMap(obj interface{}) map[string]interface{} {
 }
 
 // 修改函数的返回类型为 *Processor
-func NewProcessor(api openapi.OpenAPI, apiv2 openapi.OpenAPI, settings *config.Settings, wsclient []*wsclient.WebSocketClient) *Processors {
+func NewProcessor(api openapi.OpenAPI, apiv2 openapi.OpenAPI, settings *structs.Settings, wsclient []*wsclient.WebSocketClient) *Processors {
 	return &Processors{
 		Api:      api,
 		Apiv2:    apiv2,
@@ -178,7 +203,7 @@ func NewProcessor(api openapi.OpenAPI, apiv2 openapi.OpenAPI, settings *config.S
 }
 
 // 修改函数的返回类型为 *Processor
-func NewProcessorV2(api openapi.OpenAPI, apiv2 openapi.OpenAPI, settings *config.Settings) *Processors {
+func NewProcessorV2(api openapi.OpenAPI, apiv2 openapi.OpenAPI, settings *structs.Settings) *Processors {
 	return &Processors{
 		Api:      api,
 		Apiv2:    apiv2,

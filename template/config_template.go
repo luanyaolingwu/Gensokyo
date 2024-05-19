@@ -39,8 +39,11 @@ settings:
   global_private_to_channel: false                   # 是否将私聊转换成频道 如果是群场景 会将私聊转为群(方便提审\测试)
   global_forum_to_channel: false                     # 是否将频道帖子信息转化为频道 子频道信息 如果开启global_channel_to_group会进一步转换为群信息
   global_interaction_to_message : false              # 是否将按钮和表态回调转化为消息 仅在设置了按钮回调中的message时有效
+  global_group_msg_rre_to_message : false            # 是否将用户开关机器人资料页的机器人推送开关 产生的事件转换为文本信息并发送给应用端.false将使用onebotv11的notice类型上报.
+  global_group_msg_reject_message : "机器人主动消息被关闭"  # 当开启 global_group_msg_rre_to_message 时,机器人主动信息被关闭将上报的信息. 自行添加intent - GroupMsgRejectHandler
+  global_group_msg_receive_message : "机器人主动消息被开启" # 建议设置为无规则复杂随机内容,避免用户指令内容碰撞. 自行添加 intent - GroupMsgReceiveHandler
   hash_id : false                                    # 使用hash来进行idmaps转换,可以让user_id不是123开始的递增值
-  idmap_pro : false                 #需开启hash_id配合,高级id转换增强,可以多个真实值bind到同一个虚拟值,对于每个用户,每个群\私聊\判断私聊\频道,都会产生新的虚拟值,但可以多次bind,bind到同一个数字.数据库负担会变大.
+  idmap_pro : false                                  # 需开启hash_id配合,高级id转换增强,可以多个真实值bind到同一个虚拟值,对于每个用户,每个群\私聊\判断私聊\频道,都会产生新的虚拟值,但可以多次bind,bind到同一个数字.数据库负担会变大.
 
   #Gensokyo互联类
   server_dir: "<YOUR_SERVER_DIR>"                    # Lotus地址.不带http头的域名或ip,提供图片上传服务的服务器(图床)需要带端口号. 如果需要发base64图,需为公网ip,且开放对应端口
@@ -63,7 +66,6 @@ settings:
   image_limit : 100                 #每分钟上传的最大图片数量,可自行增加
   guild_url_image_to_base64 : false #解决频道发不了某些url图片,报错40003问题
   url_pic_transfer : false          #把图片url(任意来源图链)变成你备案的白名单url 需要较高上下行+ssl+自备案域名+设置白名单域名(暂时不需要)
-  img_up_api_ntv2: false            #gsk内建图片上传api 开启后全局有效 是否将图片转换为ntqq图床url(md发图用,自行调用)文档:https://www.yuque.com/km57bt/hlhnxg/ig2nk88fccykn6dm
   uploadpicv2_b64: true             #uploadpicv2接口使用base64直接上传 https://www.yuque.com/km57bt/hlhnxg/ig2nk88fccykn6dm
   global_server_temp_qqguild : false                     #需设置server_temp_qqguild,公域私域均可用,以频道为底层发图,速度快,该接口为进阶接口,使用有一定难度.
   server_temp_qqguild : "0"            #在v3图片接口采用固定的子频道号,可以是帖子子频道 https://www.yuque.com/km57bt/hlhnxg/uqmnsno3vx1ytp2q
@@ -165,7 +167,9 @@ settings:
   #MD相关
   custom_template_id : ""           #自动转换图文信息到md所需要的id *需要应用端支持双方向echo
   keyboard_id : ""                  #自动转换图文信息到md所需要的按钮id *需要应用端支持双方向echo
-  
+  native_md : false                 #自动转换图文信息到md,使用原生markdown能力.
+  enters_as_block : false           #自动转换图文信息到md,\r \r\n \n 替换为空格.
+
   #发送行为修改
   lazy_message_id : false           #false=message_id 条条准确对应 true=message_id 按时间范围随机对应(适合主动推送bot)前提,有足够多的活跃信息刷新id池
   ramdom_seq : false                #当多开gensokyo时,如果遇到群信息只能发出一条,请开启每个gsk的此项.(建议使用一个gsk连接多个应用)

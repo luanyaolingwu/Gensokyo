@@ -124,7 +124,7 @@ func HandleSendMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openapi.Ope
 		//用GroupID给ChannelID赋值,因为我们是把频道虚拟成了群
 		message.Params.ChannelID = message.Params.GroupID.(string)
 		var RChannelID string
-		if message.Params.UserID != nil && config.GetIdmapPro() {
+		if message.Params.UserID != nil && config.GetIdmapPro() && message.Params.UserID.(string) != "" && message.Params.UserID.(string) != "0" {
 			RChannelID, _, err = idmap.RetrieveRowByIDv2Pro(message.Params.ChannelID.(string), message.Params.UserID.(string))
 			mylog.Printf("测试,通过Proid获取的RChannelID:%v", RChannelID)
 		}
@@ -150,7 +150,7 @@ func HandleSendMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openapi.Ope
 		//用GroupID给ChannelID赋值,因为我们是把频道虚拟成了群
 		message.Params.ChannelID = message.Params.GroupID.(string)
 		var RChannelID string
-		if message.Params.UserID != nil && config.GetIdmapPro() {
+		if message.Params.UserID != nil && config.GetIdmapPro() && message.Params.UserID.(string) != "" && message.Params.UserID.(string) != "0" {
 			RChannelID, _, err = idmap.RetrieveRowByIDv2Pro(message.Params.ChannelID.(string), message.Params.UserID.(string))
 			mylog.Printf("测试,通过Proid获取的RChannelID:%v", RChannelID)
 		}
@@ -222,6 +222,41 @@ func GetMessageIDByUseridOrGroupid(appID string, userID interface{}) string {
 		messageid = echo.GetMsgIDByKey(key)
 	}
 	return messageid
+}
+
+// 通过user_id获取EventID 私聊,群,频道,通用 userID可以是三者之一 这是不需要区分群+用户的 只需要精准到群 私聊只需要精准到用户 idmap不开启的用户使用
+func GetEventIDByUseridOrGroupid(appID string, userID interface{}) string {
+	// 从appID和userID生成key
+	var userIDStr string
+	switch u := userID.(type) {
+	case int:
+		userIDStr = strconv.Itoa(u)
+	case int64:
+		userIDStr = strconv.FormatInt(u, 10)
+	case float64:
+		userIDStr = strconv.FormatFloat(u, 'f', 0, 64)
+	case string:
+		userIDStr = u
+	default:
+		// 可能需要处理其他类型或报错
+		return ""
+	}
+	//将真实id转为int 这是非idmap-pro的方式
+	userid64, err := idmap.StoreIDv2(userIDStr)
+	if err != nil {
+		mylog.Printf("Error storing ID 241: %v", err)
+		return ""
+	}
+	key := appID + "_" + fmt.Sprint(userid64)
+	mylog.Printf("GetEventIDByUseridOrGroupid_key:%v", key)
+	eventid := echo.GetEventIDByKey(key)
+	if eventid == "" {
+		// 用原始id获取,这个分支应该是没有用的.
+		key := appID + "_" + userIDStr
+		mylog.Printf("GetEventIDByUseridOrGroupid_key_2:%v", key)
+		eventid = echo.GetEventIDByKey(key)
+	}
+	return eventid
 }
 
 // 通过user_id获取messageID
