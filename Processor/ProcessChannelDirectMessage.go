@@ -95,9 +95,17 @@ func (p *Processors) ProcessChannelDirectMessage(data *dto.WSDirectMessageData) 
 		//3,通过idmap用channelid获取guildid,
 		//发信息使用的是guildid
 		//todo 优化数据库读写次数
-		messageID64, err := idmap.StoreIDv2(data.ID)
-		if err != nil {
-			log.Fatalf("Error storing ID: %v", err)
+		var messageID64 int64
+		if config.GetMemoryMsgid() {
+			messageID64, err = echo.StoreCacheInMemory(data.ID)
+			if err != nil {
+				log.Fatalf("Error storing ID: %v", err)
+			}
+		} else {
+			messageID64, err = idmap.StoreCachev2(data.ID)
+			if err != nil {
+				log.Fatalf("Error storing ID: %v", err)
+			}
 		}
 		messageID := int(messageID64)
 		//转换at
@@ -171,7 +179,7 @@ func (p *Processors) ProcessChannelDirectMessage(data *dto.WSDirectMessageData) 
 		// Convert OnebotGroupMessage to map and send
 		privateMsgMap := structToMap(privateMsg)
 		//上报信息到onebotv11应用端(正反ws)
-		p.BroadcastMessageToAll(privateMsgMap)
+		go p.BroadcastMessageToAll(privateMsgMap, p.Apiv2, data)
 	} else {
 		if !p.Settings.GlobalChannelToGroup {
 			//将频道私信作为普通频道信息
@@ -280,7 +288,7 @@ func (p *Processors) ProcessChannelDirectMessage(data *dto.WSDirectMessageData) 
 			// 将 onebotMsg 结构体转换为 map[string]interface{}
 			msgMap := structToMap(onebotMsg)
 			//上报信息到onebotv11应用端(正反ws)
-			p.BroadcastMessageToAll(msgMap)
+			go p.BroadcastMessageToAll(msgMap, p.Apiv2, data)
 		} else {
 			//将频道信息转化为群信息(特殊需求情况下)
 			//将channelid写入bolt,可取出guild_id
@@ -344,10 +352,17 @@ func (p *Processors) ProcessChannelDirectMessage(data *dto.WSDirectMessageData) 
 
 			//userid := int(userid64)
 			//映射str的messageID到int
-			messageID64, err := idmap.StoreIDv2(data.ID)
-			if err != nil {
-				mylog.Printf("Error storing ID: %v", err)
-				return nil
+			var messageID64 int64
+			if config.GetMemoryMsgid() {
+				messageID64, err = echo.StoreCacheInMemory(data.ID)
+				if err != nil {
+					log.Fatalf("Error storing ID: %v", err)
+				}
+			} else {
+				messageID64, err = idmap.StoreCachev2(data.ID)
+				if err != nil {
+					log.Fatalf("Error storing ID: %v", err)
+				}
 			}
 			messageID := int(messageID64)
 			// 如果在Array模式下, 则处理Message为Segment格式
@@ -444,7 +459,7 @@ func (p *Processors) ProcessChannelDirectMessage(data *dto.WSDirectMessageData) 
 			// Convert OnebotGroupMessage to map and send
 			groupMsgMap := structToMap(groupMsg)
 			//上报信息到onebotv11应用端(正反ws)
-			p.BroadcastMessageToAll(groupMsgMap)
+			go p.BroadcastMessageToAll(groupMsgMap, p.Apiv2, data)
 		}
 
 	}

@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/hoshinonyaruko/gensokyo/config"
 	"github.com/hoshinonyaruko/gensokyo/mylog"
@@ -30,11 +31,12 @@ var (
 )
 
 const (
-	DBName         = "idmap.db"
-	BucketName     = "ids"
-	ConfigBucket   = "config"
-	UserInfoBucket = "UserInfo"
-	CounterKey     = "currentRow"
+	DBName          = "idmap.db"
+	BucketName      = "ids"
+	CacheBucketName = "cache"
+	ConfigBucket    = "config"
+	UserInfoBucket  = "UserInfo"
+	CounterKey      = "currentRow"
 )
 
 var db *bbolt.DB
@@ -63,6 +65,10 @@ func InitializeDB() {
 		if _, err := tx.CreateBucketIfNotExists([]byte(ConfigBucket)); err != nil {
 			return err
 		}
+		// 创建储存缓存的Bucket
+		if _, err := tx.CreateBucketIfNotExists([]byte(CacheBucketName)); err != nil {
+			return err
+		}
 		return nil
 	})
 
@@ -71,9 +77,139 @@ func InitializeDB() {
 	}
 }
 
+func DeleteBucket(bucketName string) {
+	// 清空指定的bucket
+	err := db.Update(func(tx *bbolt.Tx) error {
+		// 获取指定的bucket
+		bucket := tx.Bucket([]byte(bucketName))
+		if bucket == nil {
+			mylog.Printf(bucketName + "表不存在.")
+			return nil // 如果bucket不存在，直接返回nil
+		}
+
+		// 删除bucket中的所有键值对
+		err := bucket.ForEach(func(k, v []byte) error {
+			return bucket.Delete(k)
+		})
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+
+	if err != nil {
+		log.Fatalf("Error clearing bucket %s: %v", bucketName, err)
+	} else {
+		mylog.Printf(bucketName + "清理成功.请手动运行-compaction")
+	}
+}
+
+func CleanBucket(bucketName string) {
+	var deleteCount int
+
+	err := db.Update(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte(bucketName))
+		if b == nil {
+			return fmt.Errorf("bucket %s not found", bucketName)
+		}
+
+		// 使用游标遍历bucket 正向键 k:v 32位openid:大宽int64 64位msgid:大宽int6
+		c := b.Cursor()
+		for k, v := c.First(); k != nil; k, v = c.Next() {
+			// 检查键或值是否包含冒号
+			if bytes.Contains(k, []byte(":")) || bytes.Contains(v, []byte(":")) || bytes.Contains(k, []byte("row-")) {
+				continue // 忽略包含冒号的键值对
+			}
+
+			// 检查值id的长度 这里是正向键
+			id := string(k)
+			if len(id) != 32 {
+				if err := c.Delete(); err != nil {
+					return err
+				}
+				deleteCount++
+			}
+		}
+
+		// 再次遍历处理reverseKey的情况 反向键 row-整数:string 32位openid/64位msgid
+		for k, v := c.First(); k != nil; k, v = c.Next() {
+			if strings.HasPrefix(string(k), "row-") {
+				if bytes.Contains(k, []byte(":")) || bytes.Contains(v, []byte(":")) {
+					continue // 忽略包含冒号的键值对
+				}
+				// 这里检查反向键是否是32位
+				id := string(v)
+				if len(id) != 32 {
+					if err := b.Delete(k); err != nil {
+						return err
+					}
+					deleteCount++
+				}
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		log.Fatalf("Failed to clean bucket %s: %v", bucketName, err)
+	}
+
+	log.Printf("Cleaned %d entries from bucket %s.", deleteCount, bucketName)
+}
+
+func CompactionIdmap() {
+	err := Compaction("idmap.db", "idmap_compacted.db")
+	if err != nil {
+		log.Fatalf("Failed to compact database: %v", err)
+	} else {
+		log.Println("Database compaction successful.")
+		log.Println("请手动备份原始idmap.db(可选)并将idmap_compacted.db改名为idmap.db")
+	}
+}
+
+// Compaction 创建一个新的数据库文件并复制现有的数据到这个新文件中
+func Compaction(sourceDBPath, targetDBPath string) error {
+	// 创建目标数据库文件
+	targetDB, err := bbolt.Open(targetDBPath, 0600, &bbolt.Options{Timeout: 1 * time.Second})
+	if err != nil {
+		return err
+	}
+	defer targetDB.Close()
+
+	// 从源数据库复制数据到目标数据库
+	err = db.View(func(tx *bbolt.Tx) error {
+		return tx.ForEach(func(name []byte, b *bbolt.Bucket) error {
+			// 在目标数据库中创建相同的bucket
+			return targetDB.Update(func(tx2 *bbolt.Tx) error {
+				bucket, err := tx2.CreateBucketIfNotExists(name)
+				if err != nil {
+					return err
+				}
+				// 复制所有键值对
+				return b.ForEach(func(k, v []byte) error {
+					return bucket.Put(k, v)
+				})
+			})
+		})
+	})
+
+	if err != nil {
+		return err
+	}
+
+	// 确保所有操作都已完成
+	if err := targetDB.Sync(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func CloseDB() {
 	db.Close()
 }
+
 func GenerateRowID(id string, length int) (int64, error) {
 	// 计算MD5哈希值
 	hasher := md5.New()
@@ -89,13 +225,13 @@ func GenerateRowID(id string, length int) (int64, error) {
 	}
 	digits := digitsBuilder.String()
 
-	// 取出需要长度的数字
+	// 取出需要长度的数字或补足0
 	var rowIDStr string
 	if len(digits) >= length {
 		rowIDStr = digits[:length]
 	} else {
-		// 如果数字不足指定长度，返回错误
-		return 0, fmt.Errorf("not enough digits in MD5 hash")
+		// 补足0到右侧
+		rowIDStr = digits + strings.Repeat("0", length-len(digits))
 	}
 
 	// 将数字字符串转换为int64
@@ -139,6 +275,69 @@ func StoreID(id string) (int64, error) {
 
 	err := db.Update(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(BucketName))
+
+		// 检查ID是否已经存在
+		existingRowBytes := b.Get([]byte(id))
+		if existingRowBytes != nil {
+			newRow = int64(binary.BigEndian.Uint64(existingRowBytes))
+			return nil
+		}
+		//写入虚拟值
+		if !config.GetHashIDValue() {
+			// 如果ID不存在，则为它分配一个新的行号 数字递增
+			currentRowBytes := b.Get([]byte(CounterKey))
+			if currentRowBytes == nil {
+				newRow = 1
+			} else {
+				currentRow := binary.BigEndian.Uint64(currentRowBytes)
+				newRow = int64(currentRow) + 1
+			}
+		} else {
+			// 生成新的行号
+			var err error
+			maxDigits := 18 // int64的位数上限-1
+			for digits := 9; digits <= maxDigits; digits++ {
+				newRow, err = GenerateRowID(id, digits)
+				if err != nil {
+					return err
+				}
+				// 检查新生成的行号是否重复
+				rowKey := fmt.Sprintf("row-%d", newRow)
+				if b.Get([]byte(rowKey)) == nil {
+					// 找到了一个唯一的行号，可以跳出循环
+					break
+				}
+				// 如果到达了最大尝试次数还没有找到唯一的行号，则返回错误
+				if digits == maxDigits {
+					return fmt.Errorf("unable to find a unique row ID after %d attempts", maxDigits-8)
+				}
+			}
+		}
+
+		rowBytes := make([]byte, 8)
+		binary.BigEndian.PutUint64(rowBytes, uint64(newRow))
+		//写入递增值
+		if !config.GetHashIDValue() {
+			b.Put([]byte(CounterKey), rowBytes)
+		}
+		//真实对应虚拟 用来直接判断是否存在,并快速返回
+		b.Put([]byte(id), rowBytes)
+
+		reverseKey := fmt.Sprintf("row-%d", newRow)
+		b.Put([]byte(reverseKey), []byte(id))
+
+		return nil
+	})
+
+	return newRow, err
+}
+
+// 根据a储存b
+func StoreCache(id string) (int64, error) {
+	var newRow int64
+
+	err := db.Update(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte(CacheBucketName))
 
 		// 检查ID是否已经存在
 		existingRowBytes := b.Get([]byte(id))
@@ -363,6 +562,48 @@ func StoreIDv2(id string) (int64, error) {
 	return StoreID(id)
 }
 
+// StoreCachev2 根据a储存b
+func StoreCachev2(id string) (int64, error) {
+	if config.GetLotusValue() && !config.GetLotusWithoutIdmaps() {
+		// 使用网络请求方式
+		serverDir := config.GetServer_dir()
+		portValue := config.GetPortValue()
+
+		// 根据portValue确定协议
+		protocol := "http"
+		if portValue == "443" {
+			protocol = "https"
+		}
+
+		// 构建请求URL
+		url := fmt.Sprintf("%s://%s:%s/getid?type=16&id=%s", protocol, serverDir, portValue, id)
+		resp, err := http.Get(url)
+		if err != nil {
+			return 0, fmt.Errorf("failed to send request: %v", err)
+		}
+		defer resp.Body.Close()
+
+		// 解析响应
+		var response map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+			return 0, fmt.Errorf("failed to decode response: %v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			return 0, fmt.Errorf("error response from server: %s", response["error"])
+		}
+
+		rowValue, ok := response["row"].(float64)
+		if !ok {
+			return 0, fmt.Errorf("invalid response format")
+		}
+
+		return int64(rowValue), nil
+	}
+
+	// 如果lotus为假,就保持原来的store的方法
+	return StoreCache(id)
+}
+
 // 群号 然后 用户号
 func StoreIDv2Pro(id string, subid string) (int64, int64, error) {
 	if config.GetLotusValue() && !config.GetLotusWithoutIdmaps() {
@@ -415,6 +656,25 @@ func RetrieveRowByID(rowid string) (string, error) {
 	var id string
 	err := db.View(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(BucketName))
+
+		// 根据行号检索ID
+		idBytes := b.Get([]byte("row-" + rowid))
+		if idBytes == nil {
+			return ErrKeyNotFound
+		}
+		id = string(idBytes)
+
+		return nil
+	})
+
+	return id, err
+}
+
+// 根据b得到a
+func RetrieveRowByCache(rowid string) (string, error) {
+	var id string
+	err := db.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte(CacheBucketName))
 
 		// 根据行号检索ID
 		idBytes := b.Get([]byte("row-" + rowid))
@@ -544,6 +804,48 @@ func RetrieveRowByIDv2(rowid string) (string, error) {
 
 	// 如果lotus为假,就保持原来的RetrieveRowByIDv2的方法
 	return RetrieveRowByID(rowid)
+}
+
+// RetrieveRowByCachev2 根据b得到a
+func RetrieveRowByCachev2(rowid string) (string, error) {
+	// 根据portValue确定协议
+	protocol := "http"
+	portValue := config.GetPortValue()
+	if portValue == "443" {
+		protocol = "https"
+	}
+
+	if config.GetLotusValue() && !config.GetLotusWithoutIdmaps() {
+		// 使用网络请求方式
+		serverDir := config.GetServer_dir()
+
+		// 构建请求URL
+		url := fmt.Sprintf("%s://%s:%s/getid?type=17&id=%s", protocol, serverDir, portValue, rowid)
+		resp, err := http.Get(url)
+		if err != nil {
+			return "", fmt.Errorf("failed to send request: %v", err)
+		}
+		defer resp.Body.Close()
+
+		// 解析响应
+		var response map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+			return "", fmt.Errorf("failed to decode response: %v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			return "", fmt.Errorf("error response from server: %s", response["error"])
+		}
+
+		idValue, ok := response["id"].(string)
+		if !ok {
+			return "", fmt.Errorf("invalid response format")
+		}
+
+		return idValue, nil
+	}
+
+	// 如果lotus为假,就保持原来的RetrieveRowByIDv2的方法
+	return RetrieveRowByCache(rowid)
 }
 
 // 根据a 以b为类别 储存c

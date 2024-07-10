@@ -95,11 +95,14 @@ type Settings struct {
 	AutoWithdrawTime    int                  `yaml:"auto_withdraw_time"`
 	VisualPrefixsBypass []string             `yaml:"visual_prefixs_bypass"`
 	//开发增强类
-	DevlopAcDir string `yaml:"develop_access_token_dir"`
-	DevBotid    string `yaml:"develop_bot_id"`
-	SandBoxMode bool   `yaml:"sandbox_mode"`
-	DevMessgeID bool   `yaml:"dev_message_id"`
-	SendError   bool   `yaml:"send_error"`
+	DevlopAcDir     string `yaml:"develop_access_token_dir"`
+	DevBotid        string `yaml:"develop_bot_id"`
+	SandBoxMode     bool   `yaml:"sandbox_mode"`
+	DevMessgeID     bool   `yaml:"dev_message_id"`
+	SendError       bool   `yaml:"send_error"`
+	SaveError       bool   `yaml:"save_error"`
+	DowntimeMessage string `yaml:"downtime_message"`
+	MemoryMsgid     bool   `yaml:"memory_msgid"`
 	//增长营销类
 	SelfIntroduce []string `yaml:"self_introduce"`
 	//api修改
@@ -139,16 +142,21 @@ type Settings struct {
 	EnableChangeWord  bool   `yaml:"enableChangeWord"`
 	DefaultChangeWord string `yaml:"defaultChangeWord"`
 	//错误临时修复类
-	Fix11300 bool `yaml:"fix_11300"`
+	Fix11300          bool `yaml:"fix_11300"`
+	HttpOnlyBot       bool `yaml:"http_only_bot"`
+	DoNotReplaceAppid bool `yaml:"do_not_replace_appid"`
 	//内置指令
 	BindPrefix   string   `yaml:"bind_prefix"`
 	MePrefix     string   `yaml:"me_prefix"`
 	UnlockPrefix string   `yaml:"unlock_prefix"`
 	LinkPrefix   string   `yaml:"link_prefix"`
+	AutoLink     bool     `yaml:"auto_link"`
 	MusicPrefix  string   `yaml:"music_prefix"`
 	LinkBots     []string `yaml:"link_bots"`
 	LinkText     string   `yaml:"link_text"`
 	LinkPic      string   `yaml:"link_pic"`
+	LinkLines    int      `yaml:"link_lines"`
+	LinkNum      int      `yaml:"link_num"`
 	//HTTP API配置
 	HttpAddress         string   `yaml:"http_address"`
 	AccessToken         string   `yaml:"http_access_token"`
@@ -181,4 +189,12 @@ type VisualPrefixConfig struct {
 	Prefix          string   `yaml:"prefix"`
 	WhiteList       []string `yaml:"whiteList"`
 	NoWhiteResponse string   `yaml:"No_White_Response"`
+}
+
+type InterfaceBody struct {
+	Content        string   `json:"content"`
+	State          int      `json:"state"`
+	PromptKeyboard []string `json:"prompt_keyboard,omitempty"`
+	ActionButton   int      `json:"action_button,omitempty"`
+	CallbackData   string   `json:"callback_data,omitempty"`
 }

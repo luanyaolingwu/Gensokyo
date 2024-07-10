@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hashicorp/go-multierror"
@@ -115,6 +116,7 @@ type OnebotPrivateMessage struct {
 	Font            int           `json:"font"`                        // Optional field
 	UserID          int64         `json:"user_id"`                     // Can be either string or int depending on logic
 	RealMessageType string        `json:"real_message_type,omitempty"` //当前信息的真实类型 group group_private guild guild_private
+	RealUserID      string        `json:"real_user_id,omitempty"`      //当前真实uid
 	IsBindedUserId  bool          `json:"is_binded_user_id,omitempty"` //当前用户号号是否是binded后的
 }
 
@@ -229,35 +231,104 @@ func (p *Processors) SendMessageToAllClients(message map[string]interface{}) err
 }
 
 // 方便快捷的发信息函数
-func (p *Processors) BroadcastMessageToAll(message map[string]interface{}) error {
-	var errors []string
+func (p *Processors) BroadcastMessageToAll(message map[string]interface{}, api openapi.MessageAPI, data interface{}) error {
+	var wg sync.WaitGroup
+	errorCh := make(chan string, len(p.Wsclient)+len(p.WsServerClients))
+	defer close(errorCh)
 
-	// 发送到我们作为客户端的Wsclient
+	// 并发发送到我们作为客户端的Wsclient
 	for _, client := range p.Wsclient {
-		//mylog.Printf("第%v个Wsclient", test)
-		err := client.SendMessage(message)
-		if err != nil {
-			errors = append(errors, fmt.Sprintf("error sending private message via wsclient: %v", err))
-		}
+		wg.Add(1)
+		go func(c callapi.WebSocketServerClienter) {
+			defer wg.Done()
+			if err := c.SendMessage(message); err != nil {
+				errorCh <- fmt.Sprintf("error sending message via wsclient: %v", err)
+			}
+		}(client)
 	}
 
-	// 发送到我们作为服务器连接到我们的WsServerClients
+	// 并发发送到我们作为服务器连接到我们的WsServerClients
 	for _, serverClient := range p.WsServerClients {
-		err := serverClient.SendMessage(message)
-		if err != nil {
-			errors = append(errors, fmt.Sprintf("error sending private message via WsServerClient: %v", err))
+		wg.Add(1)
+		go func(sc callapi.WebSocketServerClienter) {
+			defer wg.Done()
+			if err := sc.SendMessage(message); err != nil {
+				errorCh <- fmt.Sprintf("error sending message via WsServerClient: %v", err)
+			}
+		}(serverClient)
+	}
+
+	wg.Wait() // 等待所有goroutine完成
+
+	var errors []string
+	failed := 0
+	for len(errorCh) > 0 {
+		err := <-errorCh
+		errors = append(errors, err)
+		failed++
+	}
+
+	// 仅对连接正反ws的bot应用这个判断
+	if !p.Settings.HttpOnlyBot {
+		// 检查是否所有尝试都失败了
+		if failed == len(p.Wsclient)+len(p.WsServerClients) {
+			// 处理全部失败的情况
+			fmt.Println("All ws event sending attempts failed.")
+			downtimemessgae := config.GetDowntimeMessage()
+			switch v := data.(type) {
+			case *dto.WSGroupATMessageData:
+				msgtocreate := &dto.MessageToCreate{
+					Content: downtimemessgae,
+					MsgID:   v.ID,
+					MsgSeq:  1,
+					MsgType: 0, // 默认文本类型
+				}
+				api.PostGroupMessage(context.Background(), v.GroupID, msgtocreate)
+			case *dto.WSATMessageData:
+				msgtocreate := &dto.MessageToCreate{
+					Content: downtimemessgae,
+					MsgID:   v.ID,
+					MsgSeq:  1,
+					MsgType: 0, // 默认文本类型
+				}
+				api.PostMessage(context.Background(), v.ChannelID, msgtocreate)
+			case *dto.WSMessageData:
+				msgtocreate := &dto.MessageToCreate{
+					Content: downtimemessgae,
+					MsgID:   v.ID,
+					MsgSeq:  1,
+					MsgType: 0, // 默认文本类型
+				}
+				api.PostMessage(context.Background(), v.ChannelID, msgtocreate)
+			case *dto.WSDirectMessageData:
+				msgtocreate := &dto.MessageToCreate{
+					Content: downtimemessgae,
+					MsgID:   v.ID,
+					MsgSeq:  1,
+					MsgType: 0, // 默认文本类型
+				}
+				api.PostMessage(context.Background(), v.GuildID, msgtocreate)
+			case *dto.WSC2CMessageData:
+				msgtocreate := &dto.MessageToCreate{
+					Content: downtimemessgae,
+					MsgID:   v.ID,
+					MsgSeq:  1,
+					MsgType: 0, // 默认文本类型
+				}
+				api.PostC2CMessage(context.Background(), v.Author.ID, msgtocreate)
+			}
 		}
 	}
 
-	// 在循环结束后处理记录的错误
+	// 判断是否填写了反向post地址
+	if !allEmpty(config.GetPostUrl()) {
+		go PostMessageToUrls(message)
+	}
+
 	if len(errors) > 0 {
 		return fmt.Errorf(strings.Join(errors, "; "))
 	}
 
-	//判断是否填写了反向post地址
-	if !allEmpty(config.GetPostUrl()) {
-		PostMessageToUrls(message)
-	}
 	return nil
 }
 
@@ -271,59 +342,70 @@ func allEmpty(addresses []string) bool {
 	return true
 }
 
-// 上报信息给反向Http
+// PostMessageToUrls 使用并发 goroutines 上报信息给多个反向 HTTP URL
 func PostMessageToUrls(message map[string]interface{}) {
 	// 获取上报 URL 列表
 	postUrls := config.GetPostUrl()
 
 	// 检查 postUrls 是否为空
-	if len(postUrls) > 0 {
-
-		// 转换 message 为 JSON 字符串
-		jsonString, err := handlers.ConvertMapToJSONString(message)
-		if err != nil {
-			mylog.Printf("Error converting message to JSON: %v", err)
-			return
-		}
-
-		for _, url := range postUrls {
-			// 创建请求体
-			reqBody := bytes.NewBufferString(jsonString)
-
-			// 创建 POST 请求
-			req, err := http.NewRequest("POST", url, reqBody)
-			if err != nil {
-				mylog.Printf("Error creating POST request to %s: %v", url, err)
-				continue
-			}
-
-			// 设置请求头
-			req.Header.Set("Content-Type", "application/json")
-			// 设置 X-Self-ID
-			var selfid string
-			if config.GetUseUin() {
-				selfid = config.GetUinStr()
-			} else {
-				selfid = config.GetAppIDStr()
-			}
-
-			req.Header.Set("X-Self-ID", selfid)
-
-			// 发送请求
-			client := &http.Client{}
-			resp, err := client.Do(req)
-			if err != nil {
-				mylog.Printf("Error sending POST request to %s: %v", url, err)
-				continue
-			}
-
-			// 处理响应
-			defer resp.Body.Close()
-			// 可以添加更多的响应处理逻辑，如检查状态码等
-
-			mylog.Printf("Posted to %s successfully", url)
-		}
+	if len(postUrls) == 0 {
+		return
 	}
+
+	// 转换 message 为 JSON 字符串
+	jsonString, err := handlers.ConvertMapToJSONString(message)
+	if err != nil {
+		mylog.Printf("Error converting message to JSON: %v", err)
+		return
+	}
+
+	// 使用 WaitGroup 等待所有 goroutines 完成
+	var wg sync.WaitGroup
+	for _, url := range postUrls {
+		wg.Add(1)
+		// 启动一个 goroutine
+		go func(url string) {
+			defer wg.Done() // 确保减少 WaitGroup 的计数器
+			sendPostRequest(jsonString, url)
+		}(url)
+	}
+	wg.Wait() // 等待所有 goroutine 完成
+}
+
+// sendPostRequest 发送单个 POST 请求
+func sendPostRequest(jsonString, url string) {
+	// 创建请求体
+	reqBody := bytes.NewBufferString(jsonString)
+
+	// 创建 POST 请求
+	req, err := http.NewRequest("POST", url, reqBody)
+	if err != nil {
+		mylog.Printf("Error creating POST request to %s: %v", url, err)
+		return
+	}
+
+	// 设置请求头
+	req.Header.Set("Content-Type", "application/json")
+	// 设置 X-Self-ID
+	var selfid string
+	if config.GetUseUin() {
+		selfid = config.GetUinStr()
+	} else {
+		selfid = config.GetAppIDStr()
+	}
+	req.Header.Set("X-Self-ID", selfid)
+
+	// 发送请求
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		mylog.Printf("Error sending POST request to %s: %v", url, err)
+		return
+	}
+	defer resp.Body.Close() // 确保释放网络资源
+
+	// 可以在此处添加更多的响应处理逻辑
+	mylog.Printf("Posted to %s successfully", url)
 }
 
 func (p *Processors) HandleFrameworkCommand(messageText string, data interface{}, Type string) error {
@@ -497,7 +579,7 @@ func (p *Processors) HandleFrameworkCommand(messageText string, data interface{}
 	}
 
 	//link指令
-	if Type == "group" && strings.HasPrefix(cleanedMessage, config.GetLinkPrefix()) {
+	if strings.HasPrefix(cleanedMessage, config.GetLinkPrefix()) {
 		md, kb := generateMdByConfig()
 		SendMessageMd(md, kb, data, Type, p.Api, p.Apiv2)
 	}
@@ -763,7 +845,6 @@ func SendMessageMd(md *dto.Markdown, kb *keyboard.MessageKeyboard, data interfac
 		msgseq := echo.GetMappingSeq(msg.ID)
 		echo.AddMappingSeq(msg.ID, msgseq+1)
 		Message := &dto.MessageToCreate{
-			Content:  "markdown",
 			MsgID:    msg.ID,
 			MsgSeq:   msgseq,
 			Markdown: md,
@@ -807,7 +888,6 @@ func SendMessageMd(md *dto.Markdown, kb *keyboard.MessageKeyboard, data interfac
 		msgseq := echo.GetMappingSeq(msg.ID)
 		echo.AddMappingSeq(msg.ID, msgseq+1)
 		Message := &dto.MessageToCreate{
-			Content:  "markdown",
 			MsgID:    msg.ID,
 			MsgSeq:   msgseq,
 			Markdown: md,
@@ -841,6 +921,31 @@ func SendMessageMd(md *dto.Markdown, kb *keyboard.MessageKeyboard, data interfac
 
 	default:
 		return errors.New("未知的消息类型")
+	}
+
+	return nil
+}
+
+// SendMessageMdAddBot  发送Md消息在AddBot事件
+func SendMessageMdAddBot(md *dto.Markdown, kb *keyboard.MessageKeyboard, data *dto.GroupAddBotEvent, api openapi.OpenAPI, apiv2 openapi.OpenAPI) error {
+
+	// 处理群组消息
+	msgseq := echo.GetMappingSeq(data.EventID)
+	echo.AddMappingSeq(data.ID, msgseq+1)
+	Message := &dto.MessageToCreate{
+		Content:  "markdown",
+		EventID:  data.EventID,
+		MsgSeq:   msgseq,
+		Markdown: md,
+		Keyboard: kb,
+		MsgType:  2, //md信息
+	}
+
+	Message.Timestamp = time.Now().Unix() // 设置时间戳
+	_, err := apiv2.PostGroupMessage(context.TODO(), data.GroupOpenID, Message)
+	if err != nil {
+		mylog.Printf("发送文本群组信息失败: %v", err)
+		return err
 	}
 
 	return nil
@@ -997,35 +1102,57 @@ func generateMdByConfig() (md *dto.Markdown, kb *keyboard.MessageKeyboard) {
 	linkBots := config.GetLinkBots()
 	imgURL := config.GetLinkPic()
 
-	//超过16个时候随机显示
-	if len(linkBots) > 16 {
-		linkBots = getRandomSelection(linkBots, 16)
+	linknum := config.GetLinkNum()
+
+	//超过n个时候随机显示
+	if len(linkBots) > linknum {
+		linkBots = getRandomSelection(linkBots, linknum)
 	}
 
-	//组合 mdParams
 	var mdParams []*dto.MarkdownParams
-	if imgURL != "" {
-		height, width, err := images.GetImageDimensions(imgURL)
-		if err != nil {
-			mylog.Printf("获取图片宽高出错")
+	if !config.GetNativeMD() {
+		//组合 mdParams
+		if imgURL != "" {
+			height, width, err := images.GetImageDimensions(imgURL)
+			if err != nil {
+				mylog.Printf("获取图片宽高出错")
+			}
+			imgDesc := fmt.Sprintf("图片 #%dpx #%dpx", width, height)
+			// 创建 MarkdownParams 的实例
+			mdParams = []*dto.MarkdownParams{
+				{Key: "img_dec", Values: []string{imgDesc}},
+				{Key: "img_url", Values: []string{imgURL}},
+				{Key: "text_end", Values: []string{mdtext}},
+			}
+		} else {
+			mdParams = []*dto.MarkdownParams{
+				{Key: "text_end", Values: []string{mdtext}},
+			}
 		}
-		imgDesc := fmt.Sprintf("图片 #%dpx #%dpx", width, height)
-		// 创建 MarkdownParams 的实例
-		mdParams = []*dto.MarkdownParams{
-			{Key: "img_dec", Values: []string{imgDesc}},
-			{Key: "img_url", Values: []string{imgURL}},
-			{Key: "text_end", Values: []string{mdtext}},
+
+		// 组合模板 Markdown
+		md = &dto.Markdown{
+			CustomTemplateID: CustomTemplateID,
+			Params:           mdParams,
 		}
 	} else {
-		mdParams = []*dto.MarkdownParams{
-			{Key: "text_end", Values: []string{mdtext}},
+		// 使用原生Markdown格式
+		var content string
+		if imgURL != "" {
+			height, width, err := images.GetImageDimensions(imgURL)
+			if err != nil {
+				mylog.Printf("获取图片宽高出错")
+			}
+			imgDesc := fmt.Sprintf("图片 #%dpx #%dpx", width, height)
+			content = fmt.Sprintf("![%s](%s)\n%s", imgDesc, imgURL, mdtext)
+		} else {
+			content = mdtext
 		}
-	}
 
-	// 组合模板 Markdown
-	md = &dto.Markdown{
-		CustomTemplateID: CustomTemplateID,
-		Params:           mdParams,
+		// 原生 Markdown
+		md = &dto.Markdown{
+			Content: content,
+		}
 	}
 
 	// 创建自定义键盘
@@ -1035,30 +1162,52 @@ func generateMdByConfig() (md *dto.Markdown, kb *keyboard.MessageKeyboard) {
 
 	for _, bot := range linkBots {
 		parts := strings.SplitN(bot, "-", 3)
-		if len(parts) < 3 {
+		if len(parts) != 3 && len(parts) != 2 {
 			continue // 跳过无效的格式
 		}
-		name := parts[2]
-		botuin := parts[1]
-		botappid := parts[0]
-		boturl := handlers.BuildQQBotShareLink(botuin, botappid)
+		var button *keyboard.Button
+		if len(parts) == 3 {
+			name := parts[2]
+			botuin := parts[1]
+			botappid := parts[0]
+			boturl := handlers.BuildQQBotShareLink(botuin, botappid)
 
-		button := &keyboard.Button{
-			RenderData: &keyboard.RenderData{
-				Label:        name,
-				VisitedLabel: name,
-				Style:        1, // 蓝色边缘
-			},
-			Action: &keyboard.Action{
-				Type:          0,                             // 链接类型
-				Permission:    &keyboard.Permission{Type: 2}, // 所有人可操作
-				Data:          boturl,
-				UnsupportTips: "请升级新版手机QQ",
-			},
+			button = &keyboard.Button{
+				RenderData: &keyboard.RenderData{
+					Label:        name,
+					VisitedLabel: name,
+					Style:        1, // 蓝色边缘
+				},
+				Action: &keyboard.Action{
+					Type:          0,                             // 链接类型
+					Permission:    &keyboard.Permission{Type: 2}, // 所有人可操作
+					Data:          boturl,
+					UnsupportTips: "请升级新版手机QQ",
+				},
+			}
+		} else if len(parts) == 2 {
+			boturl := parts[0]
+			name := parts[1]
+
+			button = &keyboard.Button{
+				RenderData: &keyboard.RenderData{
+					Label:        name,
+					VisitedLabel: name,
+					Style:        1, // 蓝色边缘
+				},
+				Action: &keyboard.Action{
+					Type:          0,                             // 链接类型
+					Permission:    &keyboard.Permission{Type: 2}, // 所有人可操作
+					Data:          boturl,
+					UnsupportTips: "请升级新版手机QQ",
+				},
+			}
 		}
 
-		// 如果当前行为空或已满（4个按钮），则创建一个新行
-		if currentRow == nil || buttonCount == 4 {
+		lines := config.GetLinkLines()
+
+		// 如果当前行为空或已满（lines个按钮），则创建一个新行
+		if currentRow == nil || buttonCount == lines {
 			currentRow = &keyboard.Row{}
 			customKeyboard.Rows = append(customKeyboard.Rows, currentRow)
 			buttonCount = 0
@@ -1077,7 +1226,31 @@ func generateMdByConfig() (md *dto.Markdown, kb *keyboard.MessageKeyboard) {
 	return md, kb
 }
 
-func getRandomSelection(slice []string, max int) []string {
+// getRandomSelection 处理bots数组，分类选择随机bots
+func getRandomSelection(bots []string, max int) []string {
+	threePartBots := []string{}
+	twoPartBots := []string{}
+
+	// 分类
+	for _, bot := range bots {
+		parts := strings.SplitN(bot, "-", 3)
+		if len(parts) == 3 {
+			threePartBots = append(threePartBots, bot)
+		} else if len(parts) == 2 {
+			twoPartBots = append(twoPartBots, bot)
+		}
+	}
+
+	// 对每个分类应用随机选择
+	selectedThreePartBots := selectRandomItems(threePartBots, max)
+	selectedTwoPartBots := selectRandomItems(twoPartBots, max)
+
+	// 合并结果
+	return append(selectedThreePartBots, selectedTwoPartBots...)
+}
+
+// selectRandomItems 从给定slice中随机选择最多max个元素
+func selectRandomItems(slice []string, max int) []string {
 	if len(slice) <= max {
 		return slice
 	}

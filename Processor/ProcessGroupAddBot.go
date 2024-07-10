@@ -125,11 +125,11 @@ func (p *Processors) ProcessGroupAddBot(data *dto.GroupAddBotEvent) error {
 	}
 	groupMsgMap := structToMap(Request)
 	//上报信息到onebotv11应用端(正反ws)
-	p.BroadcastMessageToAll(groupMsgMap)
+	go p.BroadcastMessageToAll(groupMsgMap, p.Apiv2, data)
 
 	groupMsgMap = structToMap(Notice)
 	//上报信息到onebotv11应用端(正反ws)
-	p.BroadcastMessageToAll(groupMsgMap)
+	go p.BroadcastMessageToAll(groupMsgMap, p.Apiv2, data)
 
 	// 转换appid
 	AppIDString := strconv.FormatUint(p.Settings.AppID, 10)
@@ -150,29 +150,34 @@ func (p *Processors) ProcessGroupAddBot(data *dto.GroupAddBotEvent) error {
 		}
 	}
 
-	if len(validIntros) == 0 {
-		return nil
+	// 如果设置了自我介绍
+	if len(validIntros) != 0 {
+		// 从validIntros中随机选择一个
+		selectedIntro := validIntros[rand.Intn(len(validIntros))]
+
+		// 创建 ActionMessage 实例
+		message := callapi.ActionMessage{
+			Action: "send_group_msg_group",
+			Params: callapi.ParamsContent{
+				GroupID: strconv.FormatInt(GroupID64, 10), // 转换 GroupID 类型
+				UserID:  strconv.FormatInt(userid64, 10),
+				Message: selectedIntro,
+			},
+		}
+		// clinet是发回值用的 这里相当于和http一样 不发回值所以建立一个假的client
+		client := &SelfIntroduceClient{}
+		// 调用处理函数
+		_, err = handlers.HandleSendGroupMsg(client, p.Api, p.Apiv2, message)
+		if err != nil {
+			mylog.Printf("自我介绍发送失败%v", err)
+		}
 	}
 
-	// 从validIntros中随机选择一个
-	selectedIntro := validIntros[rand.Intn(len(validIntros))]
+	//link指令
+	if config.GetAutoLink() {
+		md, kb := generateMdByConfig()
+		SendMessageMdAddBot(md, kb, data, p.Api, p.Apiv2)
+	}
 
-	// 创建 ActionMessage 实例
-	message := callapi.ActionMessage{
-		Action: "send_group_msg",
-		Params: callapi.ParamsContent{
-			GroupID: strconv.FormatInt(GroupID64, 10), // 转换 GroupID 类型
-			UserID:  strconv.FormatInt(userid64, 10),
-			Message: selectedIntro,
-		},
-	}
-	// clinet是发回值用的 这里相当于和http一样 不发回值所以建立一个假的client
-	client := &SelfIntroduceClient{}
-	// 调用处理函数
-	_, err = handlers.HandleSendGroupMsg(client, p.Api, p.Apiv2, message)
-	if err != nil {
-		mylog.Printf("自我介绍发送失败%v", err)
-		return nil
-	}
 	return nil
 }

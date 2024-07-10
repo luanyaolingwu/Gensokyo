@@ -42,7 +42,7 @@ settings:
   global_group_msg_rre_to_message : false            # 是否将用户开关机器人资料页的机器人推送开关 产生的事件转换为文本信息并发送给应用端.false将使用onebotv11的notice类型上报.
   global_group_msg_reject_message : "机器人主动消息被关闭"  # 当开启 global_group_msg_rre_to_message 时,机器人主动信息被关闭将上报的信息. 自行添加intent - GroupMsgRejectHandler
   global_group_msg_receive_message : "机器人主动消息被开启" # 建议设置为无规则复杂随机内容,避免用户指令内容碰撞. 自行添加 intent - GroupMsgReceiveHandler
-  hash_id : false                                    # 使用hash来进行idmaps转换,可以让user_id不是123开始的递增值
+  hash_id : true                                    # 使用hash来进行idmaps转换,可以让user_id不是123开始的递增值
   idmap_pro : false                                  # 需开启hash_id配合,高级id转换增强,可以多个真实值bind到同一个虚拟值,对于每个用户,每个群\私聊\判断私聊\频道,都会产生新的虚拟值,但可以多次bind,bind到同一个数字.数据库负担会变大.
 
   #Gensokyo互联类
@@ -132,6 +132,9 @@ settings:
   sandbox_mode : false              #默认false 如果你只希望沙箱频道使用,请改为true
   dev_message_id : false            #在沙盒和测试环境使用无限制msg_id 仅沙盒有效,正式环境请关闭,内测结束后,tx侧未来会移除
   send_error : true                 #将报错用文本发出,避免机器人被审核报无响应
+  save_error : false                #将保存保存在log文件夹,方便开发者定位发送错误.
+  downtime_message : "我正在维护中~请不要担心,维护结束就回来~维护时间:(1小时)"
+  memory_msgid : false              #当你的机器人单日信息量超过100万,就需要高性能SSD或者开启这个选项了.部分依赖msgid的功能可能会受影响(如delete_msg)
 
   #增长营销类(推荐gensokyo-broadcast项目)
   self_introduce : ["",""]          #自我介绍,可设置多个随机发送,当不为空时,机器人被邀入群会发送自定义自我介绍 需手动添加新textintent   - "GroupAddRobotEventHandler"   - "GroupDelRobotEventHandler"
@@ -181,17 +184,21 @@ settings:
 
   #错误临时修复类
   fix_11300: false                  #修复11300报错,需要在develop_bot_id填入自己机器人的appid. 11300原因暂时未知,临时修复方案.
-
+  http_only_bot : false             #这个配置项会自动配置,请不要修改,保持false.
+  do_not_replace_appid : false      #在频道内机器人尝试at自己回at不到,保持false.群内机器人有发送用户头像url的需求时,true(因为用户头像url包含了appid,如果false就会出错.)
   
   #内置指令类
   bind_prefix : "/bind"             #需设置   #增强配置项  master_id 可触发
   me_prefix : "/me"                 #需设置   #增强配置项  master_id 可触发
   unlock_prefix : "/unlock"         #频道私信卡住了? gsk可以帮到你 在任意子频道发送unlock 你会收到来自机器人的频道私信
   link_prefix : "/link"             #友情链接配置 配置custom_template_id后可用(https://www.yuque.com/km57bt/hlhnxg/tzbr84y59dbz6pib)
+  auto_link : false                 #友情链接最高礼仪,机器人被添加到群内时发送友情链接.
   music_prefix : "点歌"             #[CQ:music,type=qq,id=123] 在消息文本组合qq音乐歌曲id,可以发送点歌,这是歌曲按钮第二个按钮的填充内容,应为你的机器人点歌插件的指令.
-  link_bots : ["",""]               #发送友情链接时 下方按钮携带的机器人 格式 "appid-qq-name","appid-qq-name"
+  link_bots : ["",""]               #发送友情链接时 下方按钮携带的机器人 格式 "appid-qq-name","appid-qq-name"或"http://xxx.com-文字" 链接中的-号自行用%2D替换 如 cgi-bin替换为cgi%2Dbin
   link_text : ""                    #友情链接文本 不可为空!
   link_pic : ""                     #友情链接图片 可为空 需url图片 可带端口 不填可能会有显示错误
+  link_lines : 2                    #内置的/link指令按钮列数(默认一行2个按钮)
+  link_num : 6                      #在link_bots随机选n个bot上友情链接,在link_bots中随机n个,避免用户选择困难,少即是多
 
   #HTTP API配置-正向http
   http_address: ""                  #http监听地址 与websocket独立 示例:0.0.0.0:5700 为空代表不开启

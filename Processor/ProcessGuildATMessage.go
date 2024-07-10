@@ -3,6 +3,7 @@ package Processor
 
 import (
 	"fmt"
+	"log"
 	"strconv"
 	"time"
 
@@ -132,7 +133,7 @@ func (p *Processors) ProcessGuildATMessage(data *dto.WSATMessageData) error {
 		msgMap := structToMap(onebotMsg)
 
 		//上报信息到onebotv11应用端(正反ws)
-		p.BroadcastMessageToAll(msgMap)
+		go p.BroadcastMessageToAll(msgMap, p.Apiv2, data)
 	} else {
 		// GlobalChannelToGroup为true时的处理逻辑
 		//将频道转化为一个群
@@ -195,10 +196,17 @@ func (p *Processors) ProcessGuildATMessage(data *dto.WSATMessageData) error {
 		echostr := fmt.Sprintf("%s_%d_%d", AppIDString, s, currentTimeMillis)
 
 		//映射str的messageID到int
-		messageID64, err := idmap.StoreIDv2(data.ID)
-		if err != nil {
-			mylog.Printf("Error storing ID: %v", err)
-			return nil
+		var messageID64 int64
+		if config.GetMemoryMsgid() {
+			messageID64, err = echo.StoreCacheInMemory(data.ID)
+			if err != nil {
+				log.Fatalf("Error storing ID: %v", err)
+			}
+		} else {
+			messageID64, err = idmap.StoreCachev2(data.ID)
+			if err != nil {
+				log.Fatalf("Error storing ID: %v", err)
+			}
 		}
 		messageID := int(messageID64)
 		// 如果在Array模式下, 则处理Message为Segment格式
@@ -288,6 +296,8 @@ func (p *Processors) ProcessGuildATMessage(data *dto.WSATMessageData) error {
 		echo.AddMsgType(AppIDString, ChannelID64, "guild")
 		//懒message_id池
 		echo.AddLazyMessageId(strconv.FormatInt(ChannelID64, 10), data.ID, time.Now())
+		//测试
+		echo.AddLazyMessageId(data.ChannelID, data.ID, time.Now())
 		//懒message_id池
 		//echo.AddLazyMessageId(strconv.FormatInt(userid64, 10), data.ID, time.Now())
 		//echo.AddLazyMessageIdv2(strconv.FormatInt(ChannelID64, 10), strconv.FormatInt(userid64, 10), data.ID, time.Now())
@@ -298,7 +308,7 @@ func (p *Processors) ProcessGuildATMessage(data *dto.WSATMessageData) error {
 		// Convert OnebotGroupMessage to map and send
 		groupMsgMap := structToMap(groupMsg)
 		//上报信息到onebotv11应用端(正反ws)
-		p.BroadcastMessageToAll(groupMsgMap)
+		go p.BroadcastMessageToAll(groupMsgMap, p.Apiv2, data)
 
 	}
 

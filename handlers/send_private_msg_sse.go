@@ -4,52 +4,44 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 
 	"github.com/hoshinonyaruko/gensokyo/callapi"
 	"github.com/hoshinonyaruko/gensokyo/config"
 	"github.com/hoshinonyaruko/gensokyo/echo"
 	"github.com/hoshinonyaruko/gensokyo/idmap"
 	"github.com/hoshinonyaruko/gensokyo/mylog"
+	"github.com/hoshinonyaruko/gensokyo/structs"
 	"github.com/tencent-connect/botgo/dto"
 	"github.com/tencent-connect/botgo/openapi"
 )
 
-var msgIDToIndex = make(map[string]int)
-var msgIDToRelatedID = make(map[string]string)
+var msgIDToIndex sync.Map
+var msgIDToRelatedID sync.Map
 
 func init() {
 	callapi.RegisterHandler("send_private_msg_sse", HandleSendPrivateMsgSSE)
 }
 
-type InterfaceBody struct {
-	Content        string   `json:"content"`
-	State          int      `json:"state"`
-	PromptKeyboard []string `json:"prompt_keyboard,omitempty"`
-	ActionButton   int      `json:"action_button,omitempty"`
-	CallbackData   string   `json:"callback_data,omitempty"`
-}
-
 func incrementIndex(msgID string) int {
-	if _, exists := msgIDToIndex[msgID]; !exists {
-		msgIDToIndex[msgID] = 0 // 初始化为0
+	actual, loaded := msgIDToIndex.LoadOrStore(msgID, 0)
+	if !loaded {
 		return 0
 	}
-	msgIDToIndex[msgID]++ // 递增Index
-	return msgIDToIndex[msgID]
+	newVal := actual.(int) + 1
+	msgIDToIndex.Store(msgID, newVal)
+	return newVal
 }
 
-// GetRelatedID 根据MessageID获取相关的ID
-func GetRelatedID(MessageID string) string {
-	if relatedID, exists := msgIDToRelatedID[MessageID]; exists {
-		return relatedID
-	}
-	// 如果没有找到转换关系，返回空字符串
-	return ""
-}
-
-// UpdateRelatedID 更新MessageID到respID的映射关系
 func UpdateRelatedID(MessageID, ID string) {
-	msgIDToRelatedID[MessageID] = ID
+	msgIDToRelatedID.Store(MessageID, ID)
+}
+
+func GetRelatedID(MessageID string) string {
+	if relatedID, ok := msgIDToRelatedID.Load(MessageID); ok {
+		return relatedID.(string)
+	}
+	return ""
 }
 
 func HandleSendPrivateMsgSSE(client callapi.Client, api openapi.OpenAPI, apiv2 openapi.OpenAPI, message callapi.ActionMessage) (string, error) {
@@ -108,7 +100,7 @@ func HandleSendPrivateMsgSSE(client callapi.Client, api openapi.OpenAPI, apiv2 o
 	}
 
 	// 然后，将这个JSON字符串反序列化到InterfaceBody类型的对象中
-	var messageBody InterfaceBody
+	var messageBody structs.InterfaceBody
 	err = json.Unmarshal(messageJSON, &messageBody)
 	if err != nil {
 		fmt.Printf("Error unmarshalling to InterfaceBody: %v\n", err)
@@ -164,7 +156,7 @@ func HandleSendPrivateMsgSSE(client callapi.Client, api openapi.OpenAPI, apiv2 o
 	return retmsg, nil
 }
 
-func generateMessageSSE(body InterfaceBody, msgID, ID string) *dto.MessageSSE {
+func generateMessageSSE(body structs.InterfaceBody, msgID, ID string) *dto.MessageSSE {
 	index := incrementIndex(msgID) // 获取并递增Index
 
 	// 将InterfaceBody的PromptKeyboard转换为MessageSSE的结构

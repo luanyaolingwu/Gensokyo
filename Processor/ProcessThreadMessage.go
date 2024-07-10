@@ -4,6 +4,7 @@ package Processor
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -137,7 +138,7 @@ func (p *Processors) ProcessThreadMessage(data *dto.WSThreadData) error {
 		msgMap := structToMap(onebotMsg)
 
 		//上报信息到onebotv11应用端(正反ws)
-		p.BroadcastMessageToAll(msgMap)
+		go p.BroadcastMessageToAll(msgMap, p.Apiv2, data)
 
 		return nil
 	} else {
@@ -256,7 +257,7 @@ func (p *Processors) ProcessThreadMessage(data *dto.WSThreadData) error {
 			msgMap := structToMap(onebotMsg)
 
 			//上报信息到onebotv11应用端(正反ws)
-			p.BroadcastMessageToAll(msgMap)
+			go p.BroadcastMessageToAll(msgMap, p.Apiv2, data)
 		} else {
 			//转化为群信息
 			//将频道转化为一个群
@@ -312,10 +313,17 @@ func (p *Processors) ProcessThreadMessage(data *dto.WSThreadData) error {
 			// 构造echostr，包括AppID，原始的s变量和当前时间戳
 			echostr := fmt.Sprintf("%s_%d_%d", AppIDString, s, currentTimeMillis)
 			//映射str的messageID到int
-			messageID64, err := idmap.StoreIDv2(data.ID)
-			if err != nil {
-				mylog.Printf("Error storing ID: %v", err)
-				return nil
+			var messageID64 int64
+			if config.GetMemoryMsgid() {
+				messageID64, err = echo.StoreCacheInMemory(data.ID)
+				if err != nil {
+					log.Fatalf("Error storing ID: %v", err)
+				}
+			} else {
+				messageID64, err = idmap.StoreCachev2(data.ID)
+				if err != nil {
+					log.Fatalf("Error storing ID: %v", err)
+				}
 			}
 			messageID := int(messageID64)
 			// 如果在Array模式下, 则处理Message为Segment格式
@@ -394,7 +402,7 @@ func (p *Processors) ProcessThreadMessage(data *dto.WSThreadData) error {
 			groupMsgMap := structToMap(groupMsg)
 
 			//上报信息到onebotv11应用端(正反ws)
-			p.BroadcastMessageToAll(groupMsgMap)
+			go p.BroadcastMessageToAll(groupMsgMap, p.Apiv2, data)
 
 		}
 	}

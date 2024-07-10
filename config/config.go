@@ -1163,6 +1163,18 @@ func GetSendError() bool {
 	return instance.Settings.SendError
 }
 
+// 获取GetSaveError的值
+func GetSaveError() bool {
+	mu.Lock()
+	defer mu.Unlock()
+
+	if instance == nil {
+		mylog.Println("Warning: instance is nil when trying to GetSaveError value.")
+		return true
+	}
+	return instance.Settings.SaveError
+}
+
 // 获取GetAddAtGroup的值
 func GetAddAtGroup() bool {
 	mu.Lock()
@@ -2279,4 +2291,76 @@ func GetNativeMD() bool {
 		return false
 	}
 	return instance.Settings.NativeMD
+}
+
+// 获取DowntimeMessage
+func GetDowntimeMessage() string {
+	mu.Lock()
+	defer mu.Unlock()
+	if instance != nil {
+		return instance.Settings.DowntimeMessage
+	}
+	return ""
+}
+
+// 获取GetAutoLink的值
+func GetAutoLink() bool {
+	mu.Lock()
+	defer mu.Unlock()
+
+	if instance == nil {
+		mylog.Println("Warning: instance is nil when trying to AutoLink value.")
+		return false
+	}
+	return instance.Settings.AutoLink
+}
+
+// 获取GetLinkLines的值
+func GetLinkLines() int {
+	mu.Lock()
+	defer mu.Unlock()
+
+	if instance == nil {
+		mylog.Println("Warning: instance is nil when trying to LinkLines value.")
+		return 2 //默认2个一行
+	}
+
+	return instance.Settings.LinkLines
+}
+
+// 获取GetLinkNum的值
+func GetLinkNum() int {
+	mu.Lock()
+	defer mu.Unlock()
+
+	if instance == nil {
+		mylog.Println("Warning: instance is nil when trying to LinkNum value.")
+		return 6 //默认6个
+	}
+
+	return instance.Settings.LinkNum
+}
+
+// 获取GetDoNotReplaceAppid的值
+func GetDoNotReplaceAppid() bool {
+	mu.Lock()
+	defer mu.Unlock()
+
+	if instance == nil {
+		mylog.Println("Warning: instance is nil when trying to DoNotReplaceAppid value.")
+		return false
+	}
+	return instance.Settings.DoNotReplaceAppid
+}
+
+// 获取GetMemoryMsgid的值
+func GetMemoryMsgid() bool {
+	mu.Lock()
+	defer mu.Unlock()
+
+	if instance == nil {
+		mylog.Println("Warning: instance is nil when trying to MemoryMsgid value.")
+		return false
+	}
+	return instance.Settings.MemoryMsgid
 }

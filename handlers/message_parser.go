@@ -146,11 +146,20 @@ func SendResponse(client callapi.Client, err error, message *callapi.ActionMessa
 	// 设置响应值
 	response := ServerResponse{}
 	if resp != nil {
-		messageID64, mapErr = idmap.StoreIDv2(resp.Message.ID)
-		if mapErr != nil {
-			mylog.Printf("Error storing ID: %v", mapErr)
-			return "", nil
+		if config.GetMemoryMsgid() {
+			messageID64, mapErr = echo.StoreCacheInMemory(resp.Message.ID)
+			if mapErr != nil {
+				mylog.Printf("Error storing ID: %v", mapErr)
+				return "", nil
+			}
+		} else {
+			messageID64, mapErr = idmap.StoreCachev2(resp.Message.ID)
+			if mapErr != nil {
+				mylog.Printf("Error storing ID: %v", mapErr)
+				return "", nil
+			}
 		}
+
 		response.Data.MessageID = int(messageID64)
 		// 发送成功 增加今日发信息数
 		botstats.RecordMessageSent()
@@ -246,10 +255,18 @@ func SendGuildResponse(client callapi.Client, err error, message *callapi.Action
 	// 设置响应值
 	response := ServerResponse{}
 	if resp != nil {
-		messageID64, mapErr = idmap.StoreIDv2(resp.ID)
-		if mapErr != nil {
-			mylog.Printf("Error storing ID: %v", mapErr)
-			return "", nil
+		if config.GetMemoryMsgid() {
+			messageID64, mapErr = echo.StoreCacheInMemory(resp.ID)
+			if mapErr != nil {
+				mylog.Printf("Error storing ID: %v", mapErr)
+				return "", nil
+			}
+		} else {
+			messageID64, mapErr = idmap.StoreCachev2(resp.ID)
+			if mapErr != nil {
+				mylog.Printf("Error storing ID: %v", mapErr)
+				return "", nil
+			}
 		}
 		response.Data.MessageID = int(messageID64)
 		// 发送成功 增加今日发信息数
@@ -304,10 +321,18 @@ func SendC2CResponse(client callapi.Client, err error, message *callapi.ActionMe
 	// 设置响应值
 	response := ServerResponse{}
 	if resp != nil {
-		messageID64, mapErr = idmap.StoreIDv2(resp.Message.ID)
-		if mapErr != nil {
-			mylog.Printf("Error storing ID: %v", mapErr)
-			return "", nil
+		if config.GetMemoryMsgid() {
+			messageID64, mapErr = echo.StoreCacheInMemory(resp.Message.ID)
+			if mapErr != nil {
+				mylog.Printf("Error storing ID: %v", mapErr)
+				return "", nil
+			}
+		} else {
+			messageID64, mapErr = idmap.StoreCachev2(resp.Message.ID)
+			if mapErr != nil {
+				mylog.Printf("Error storing ID: %v", mapErr)
+				return "", nil
+			}
 		}
 		response.Data.MessageID = int(messageID64)
 		// 发送成功 增加今日发信息数
@@ -361,10 +386,18 @@ func SendGuildPrivateResponse(client callapi.Client, err error, message *callapi
 	// 设置响应值
 	response := ServerResponse{}
 	if resp != nil {
-		messageID64, mapErr = idmap.StoreIDv2(resp.ID)
-		if mapErr != nil {
-			mylog.Printf("Error storing ID: %v", mapErr)
-			return "", nil
+		if config.GetMemoryMsgid() {
+			messageID64, mapErr = echo.StoreCacheInMemory(resp.ID)
+			if mapErr != nil {
+				mylog.Printf("Error storing ID: %v", mapErr)
+				return "", nil
+			}
+		} else {
+			messageID64, mapErr = idmap.StoreCachev2(resp.ID)
+			if mapErr != nil {
+				mylog.Printf("Error storing ID: %v", mapErr)
+				return "", nil
+			}
 		}
 		response.Data.MessageID = int(messageID64)
 	} else {
@@ -416,6 +449,13 @@ func parseMessageContent(paramsMessage callapi.ParamsContent, message callapi.Ac
 		if config.GetEnableChangeWord() {
 			messageText = acnode.CheckWordOUT(messageText)
 		}
+		if paramsMessage.GroupID == nil {
+			// 解析[CQ:avatar,qq=123456]
+			messageText = ProcessCQAvatarNoGroupID(messageText)
+		} else {
+			// 解析[CQ:avatar,qq=123456]
+			messageText = ProcessCQAvatar(paramsMessage.GroupID.(string), messageText)
+		}
 	case []interface{}:
 		//多个映射组成的切片
 		mylog.Printf("params.message is a slice (segment_type_koishi)\n")
@@ -450,6 +490,13 @@ func parseMessageContent(paramsMessage callapi.ParamsContent, message callapi.Ac
 			case "at":
 				qqNumber, _ := segmentMap["data"].(map[string]interface{})["qq"].(string)
 				segmentContent = "[CQ:at,qq=" + qqNumber + "]"
+			case "avatar":
+				qqNumber, _ := segmentMap["data"].(map[string]interface{})["qq"].(string)
+				if paramsMessage.GroupID == nil {
+					segmentContent, _ = GetAvatarCQCodeNoGroupID(qqNumber)
+				} else {
+					segmentContent, _ = GetAvatarCQCode(paramsMessage.GroupID.(string), qqNumber)
+				}
 			case "markdown":
 				mdContent, ok := segmentMap["data"].(map[string]interface{})["data"]
 				if ok {
@@ -460,7 +507,7 @@ func parseMessageContent(paramsMessage callapi.ParamsContent, message callapi.Ac
 							mylog.Printf("Error marshaling mdContentMap to JSON:%v", err)
 						}
 						encoded := base64.StdEncoding.EncodeToString(mdContentBytes)
-						segmentContent = "[CQ:markdown,data=" + encoded + "]"
+						segmentContent = "[CQ:markdown,data=base64://" + encoded + "]"
 					} else if mdContentStr, isString := mdContent.(string); isString {
 						// mdContent是string
 						if strings.HasPrefix(mdContentStr, "base64://") {
@@ -483,8 +530,10 @@ func parseMessageContent(paramsMessage callapi.ParamsContent, message callapi.Ac
 								mylog.Printf("Error marshaling jsonMap to JSON:%v", err)
 							}
 							encoded := base64.StdEncoding.EncodeToString(mdContentBytes)
-							segmentContent = "[CQ:markdown,data=" + encoded + "]"
+							segmentContent = "[CQ:markdown,data=base64://" + encoded + "]"
 						}
+					} else {
+						mylog.Printf("Error marshaling markdown segment wrong type.")
 					}
 				} else {
 					mylog.Printf("Error marshaling markdown segment to interface,contain type but data is nil.")
@@ -516,6 +565,13 @@ func parseMessageContent(paramsMessage callapi.ParamsContent, message callapi.Ac
 		case "at":
 			qqNumber, _ := message["data"].(map[string]interface{})["qq"].(string)
 			messageText = "[CQ:at,qq=" + qqNumber + "]"
+		case "avatar":
+			qqNumber, _ := message["data"].(map[string]interface{})["qq"].(string)
+			if paramsMessage.GroupID == nil {
+				messageText, _ = GetAvatarCQCodeNoGroupID(qqNumber)
+			} else {
+				messageText, _ = GetAvatarCQCode(paramsMessage.GroupID.(string), qqNumber)
+			}
 		case "markdown":
 			mdContent, ok := message["data"].(map[string]interface{})["data"]
 			if ok {
@@ -526,7 +582,7 @@ func parseMessageContent(paramsMessage callapi.ParamsContent, message callapi.Ac
 						mylog.Printf("Error marshaling mdContentMap to JSON:%v", err)
 					}
 					encoded := base64.StdEncoding.EncodeToString(mdContentBytes)
-					messageText = "[CQ:markdown,data=" + encoded + "]"
+					messageText = "[CQ:markdown,data=base64://" + encoded + "]"
 				} else if mdContentStr, isString := mdContent.(string); isString {
 					// mdContent是string
 					if strings.HasPrefix(mdContentStr, "base64://") {
@@ -549,8 +605,10 @@ func parseMessageContent(paramsMessage callapi.ParamsContent, message callapi.Ac
 							mylog.Printf("Error marshaling jsonMap to JSON:%v", err)
 						}
 						encoded := base64.StdEncoding.EncodeToString(mdContentBytes)
-						messageText = "[CQ:markdown,data=" + encoded + "]"
+						messageText = "[CQ:markdown,data=base64://" + encoded + "]"
 					}
+				} else {
+					mylog.Printf("Error marshaling mdContent wrong type.")
 				}
 			} else {
 				mylog.Printf("Error marshaling markdown segment to interface,contain type but data is nil.")
@@ -559,8 +617,14 @@ func parseMessageContent(paramsMessage callapi.ParamsContent, message callapi.Ac
 	default:
 		mylog.Println("Unsupported message format: params.message field is not a string, map or slice")
 	}
-	//处理at
-	messageText = transformMessageTextAt(messageText)
+
+	if paramsMessage.GroupID == nil {
+		//处理at
+		messageText = transformMessageTextAtNoGroupID(messageText)
+	} else {
+		//处理at
+		messageText = transformMessageTextAt(messageText, paramsMessage.GroupID.(string))
+	}
 
 	//mylog.Printf(messageText)
 
@@ -631,9 +695,12 @@ func isIPAddress(address string) bool {
 }
 
 // at处理
-func transformMessageTextAt(messageText string) string {
-	// 首先，将AppID替换为BotID
-	messageText = strings.ReplaceAll(messageText, AppID, BotID)
+func transformMessageTextAt(messageText string, groupid string) string {
+	// DoNotReplaceAppid=false(默认频道bot,需要自己at自己时,否则改成true)
+	if !config.GetDoNotReplaceAppid() {
+		// 首先，将AppID替换为BotID
+		messageText = strings.ReplaceAll(messageText, AppID, BotID)
+	}
 
 	// 去除所有[CQ:reply,id=数字] todo 更好的处理办法
 	replyRE := regexp.MustCompile(`\[CQ:reply,id=\d+\]`)
@@ -644,7 +711,56 @@ func transformMessageTextAt(messageText string) string {
 	messageText = re.ReplaceAllStringFunc(messageText, func(m string) string {
 		submatches := re.FindStringSubmatch(m)
 		if len(submatches) > 1 {
-			realUserID, err := idmap.RetrieveRowByIDv2(submatches[1])
+			var realUserID string
+			var err error
+			if config.GetIdmapPro() {
+				_, realUserID, err = idmap.RetrieveRowByIDv2Pro(groupid, submatches[1])
+			} else {
+				realUserID, err = idmap.RetrieveRowByIDv2(submatches[1])
+			}
+			if err != nil {
+				// 如果出错，也替换成相应的格式，但使用原始QQ号
+				mylog.Printf("Error retrieving user ID: %v", err)
+				return "<@!" + submatches[1] + ">"
+			}
+
+			// 在这里检查 GetRemoveBotAtGroup 和 realUserID 的长度
+			if config.GetRemoveBotAtGroup() && len(realUserID) == 32 {
+				return ""
+			}
+
+			return "<@!" + realUserID + ">"
+		}
+		return m
+	})
+	return messageText
+}
+
+// at处理
+func transformMessageTextAtNoGroupID(messageText string) string {
+	// DoNotReplaceAppid=false(默认频道bot,需要自己at自己时,否则改成true)
+	if !config.GetDoNotReplaceAppid() {
+		// 首先，将AppID替换为BotID
+		messageText = strings.ReplaceAll(messageText, AppID, BotID)
+	}
+
+	// 去除所有[CQ:reply,id=数字] todo 更好的处理办法
+	replyRE := regexp.MustCompile(`\[CQ:reply,id=\d+\]`)
+	messageText = replyRE.ReplaceAllString(messageText, "")
+
+	// 使用正则表达式来查找所有[CQ:at,qq=数字]的模式
+	re := regexp.MustCompile(`\[CQ:at,qq=(\d+)\]`)
+	messageText = re.ReplaceAllStringFunc(messageText, func(m string) string {
+		submatches := re.FindStringSubmatch(m)
+		if len(submatches) > 1 {
+			var realUserID string
+			var err error
+			if config.GetIdmapPro() {
+				// 这是个魔法数 代表私聊
+				_, realUserID, err = idmap.RetrieveRowByIDv2Pro("690426430", submatches[1])
+			} else {
+				realUserID, err = idmap.RetrieveRowByIDv2(submatches[1])
+			}
 			if err != nil {
 				// 如果出错，也替换成相应的格式，但使用原始QQ号
 				mylog.Printf("Error retrieving user ID: %v", err)
@@ -754,7 +870,7 @@ func RevertTransformedText(data interface{}, msgtype string, api openapi.OpenAPI
 		//处理前 先去前后空
 		messageText = strings.TrimSpace(msg.Content)
 	}
-	var originmessageText = messageText
+
 	//mylog.Printf("1[%v]", messageText)
 
 	// 将messageText里的BotID替换成AppID
@@ -798,6 +914,8 @@ func RevertTransformedText(data interface{}, msgtype string, api openapi.OpenAPI
 			messageText = strings.TrimSpace(messageText)
 		}
 	}
+
+	var originmessageText = messageText
 	//mylog.Printf("2[%v]", messageText)
 
 	// 检查是否需要移除前缀
@@ -1372,6 +1490,11 @@ func parseMDData(mdData []byte) (*dto.Markdown, *keyboard.MessageKeyboard, error
 		// 处理顶层的 Rows
 		kb = &keyboard.MessageKeyboard{
 			Content: &keyboard.CustomKeyboard{Rows: temp.Rows},
+		}
+	} else if temp.Keyboard.ID != "" {
+		// 处理嵌套在 Keyboard 中的 ID(当使用按钮模板时)
+		kb = &keyboard.MessageKeyboard{
+			ID: temp.Keyboard.ID,
 		}
 	}
 

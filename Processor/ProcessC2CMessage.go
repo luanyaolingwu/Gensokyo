@@ -67,11 +67,19 @@ func (p *Processors) ProcessC2CMessage(data *dto.WSC2CMessageData) error {
 		//收到私聊信息调用的具体还原步骤
 		//1,idmap还原真实userid,
 		//发信息使用的是userid
-
-		messageID64, err := idmap.StoreIDv2(data.ID)
-		if err != nil {
-			log.Fatalf("Error storing ID: %v", err)
+		var messageID64 int64
+		if config.GetMemoryMsgid() {
+			messageID64, err = echo.StoreCacheInMemory(data.ID)
+			if err != nil {
+				log.Fatalf("Error storing ID: %v", err)
+			}
+		} else {
+			messageID64, err = idmap.StoreCachev2(data.ID)
+			if err != nil {
+				log.Fatalf("Error storing ID: %v", err)
+			}
 		}
+
 		messageID := int(messageID64)
 		if config.GetAutoBind() {
 			if len(data.Attachments) > 0 && data.Attachments[0].URL != "" {
@@ -120,12 +128,12 @@ func (p *Processors) ProcessC2CMessage(data *dto.WSC2CMessageData) error {
 			SubType: "friend",
 			Time:    time.Now().Unix(),
 		}
+		// 额外字段
 		if !config.GetNativeOb11() {
 			privateMsg.RealMessageType = "group_private"
 			privateMsg.IsBindedUserId = IsBindedUserId
-			if IsBindedUserId {
-				privateMsg.Avatar, _ = GenerateAvatarURL(userid64)
-			}
+			privateMsg.RealUserID = data.Author.ID
+			privateMsg.Avatar, _ = GenerateAvatarURLV2(data.Author.ID)
 		}
 		// 根据条件判断是否添加Echo字段
 		if config.GetTwoWayEcho() {
@@ -139,14 +147,17 @@ func (p *Processors) ProcessC2CMessage(data *dto.WSC2CMessageData) error {
 		//其实不需要用AppIDString,因为gensokyo是单机器人框架
 		//可以试着开发一个,会很棒的
 		echo.AddMsgID(AppIDString, userid64, data.ID)
+
 		//懒message_id池
 		echo.AddLazyMessageId(strconv.FormatInt(userid64, 10), data.ID, time.Now())
+
+		//懒message_id池
+		echo.AddLazyMessageId(data.Author.ID, data.ID, time.Now())
+
 		//储存类型
 		echo.AddMsgType(AppIDString, userid64, "group_private")
 		//储存当前群或频道号的类型
 		idmap.WriteConfigv2(fmt.Sprint(userid64), "type", "group_private")
-		//储存当前群或频道号的类型 私信不需要
-		//idmap.WriteConfigv2(data.ChannelID, "type", "group_private")
 
 		// 调试
 		PrintStructWithFieldNames(privateMsg)
@@ -154,7 +165,7 @@ func (p *Processors) ProcessC2CMessage(data *dto.WSC2CMessageData) error {
 		// Convert OnebotGroupMessage to map and send
 		privateMsgMap := structToMap(privateMsg)
 		//上报信息到onebotv11应用端(正反ws)
-		p.BroadcastMessageToAll(privateMsgMap)
+		go p.BroadcastMessageToAll(privateMsgMap, p.Apiv2, data)
 		//组合FriendData
 		struserid := strconv.FormatInt(userid64, 10)
 		userdata := structs.FriendData{
@@ -205,10 +216,17 @@ func (p *Processors) ProcessC2CMessage(data *dto.WSC2CMessageData) error {
 		//框架内指令
 		p.HandleFrameworkCommand(messageText, data, "group_private")
 		//映射str的messageID到int
-		messageID64, err := idmap.StoreIDv2(data.ID)
-		if err != nil {
-			mylog.Printf("Error storing ID: %v", err)
-			return nil
+		var messageID64 int64
+		if config.GetMemoryMsgid() {
+			messageID64, err = echo.StoreCacheInMemory(data.ID)
+			if err != nil {
+				log.Fatalf("Error storing ID: %v", err)
+			}
+		} else {
+			messageID64, err = idmap.StoreCachev2(data.ID)
+			if err != nil {
+				log.Fatalf("Error storing ID: %v", err)
+			}
 		}
 		messageID := int(messageID64)
 		//todo 判断array模式 然后对Message处理成array格式
@@ -238,11 +256,15 @@ func (p *Processors) ProcessC2CMessage(data *dto.WSC2CMessageData) error {
 				Area:   "0",
 				Level:  "0",
 			},
-			SubType:         "normal",
-			Time:            time.Now().Unix(),
-			Avatar:          "",
-			RealMessageType: "group_private",
-			IsBindedUserId:  IsBindedUserId,
+			SubType: "normal",
+			Time:    time.Now().Unix(),
+		}
+		//增强配置
+		if !config.GetNativeOb11() {
+			groupMsg.RealMessageType = "group_private"
+			groupMsg.IsBindedUserId = IsBindedUserId
+			groupMsg.RealUserID = data.Author.ID
+			groupMsg.Avatar, _ = GenerateAvatarURLV2(data.Author.ID)
 		}
 		//根据条件判断是否增加nick和card
 		var CaN = config.GetCardAndNick()
@@ -283,8 +305,12 @@ func (p *Processors) ProcessC2CMessage(data *dto.WSC2CMessageData) error {
 		echo.AddMsgType(AppIDString, userid64, "group_private")
 		//储存当前群或频道号的类型
 		idmap.WriteConfigv2(fmt.Sprint(userid64), "type", "group_private")
+
 		//懒message_id池
 		echo.AddLazyMessageId(strconv.FormatInt(userid64, 10), data.ID, time.Now())
+
+		//懒message_id池
+		echo.AddLazyMessageId(data.Author.ID, data.ID, time.Now())
 
 		//调试
 		PrintStructWithFieldNames(groupMsg)
@@ -292,7 +318,7 @@ func (p *Processors) ProcessC2CMessage(data *dto.WSC2CMessageData) error {
 		// Convert OnebotGroupMessage to map and send
 		groupMsgMap := structToMap(groupMsg)
 		//上报信息到onebotv11应用端(正反ws)
-		p.BroadcastMessageToAll(groupMsgMap)
+		go p.BroadcastMessageToAll(groupMsgMap, p.Apiv2, data)
 
 		//组合FriendData
 		struserid := strconv.FormatInt(userid64, 10)

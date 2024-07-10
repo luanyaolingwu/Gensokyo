@@ -3,6 +3,7 @@ package Processor
 
 import (
 	"fmt"
+	"log"
 	"strconv"
 	"time"
 
@@ -78,10 +79,17 @@ func (p *Processors) ProcessGroupMessage(data *dto.WSGroupATMessageData) error {
 	//框架内指令
 	p.HandleFrameworkCommand(messageText, data, "group")
 	//映射str的messageID到int
-	messageID64, err := idmap.StoreIDv2(data.ID)
-	if err != nil {
-		mylog.Printf("Error storing ID: %v", err)
-		return nil
+	var messageID64 int64
+	if config.GetMemoryMsgid() {
+		messageID64, err = echo.StoreCacheInMemory(data.ID)
+		if err != nil {
+			log.Fatalf("Error storing ID: %v", err)
+		}
+	} else {
+		messageID64, err = idmap.StoreCachev2(data.ID)
+		if err != nil {
+			log.Fatalf("Error storing ID: %v", err)
+		}
 	}
 	messageID := int(messageID64)
 	if config.GetAutoBind() {
@@ -188,6 +196,6 @@ func (p *Processors) ProcessGroupMessage(data *dto.WSGroupATMessageData) error {
 	// Convert OnebotGroupMessage to map and send
 	groupMsgMap := structToMap(groupMsg)
 	//上报信息到onebotv11应用端(正反ws)
-	p.BroadcastMessageToAll(groupMsgMap)
+	go p.BroadcastMessageToAll(groupMsgMap, p.Apiv2, data)
 	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"os"
 	"strconv"
@@ -83,6 +84,12 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 		mylog.Printf("send_group_msgs接收到错误action: %v", message)
 		return "", nil
 	}
+
+	// 内部逻辑 ProcessGroupAddBot.go 中定义的 通过http和ws无法触发 锁定类型
+	if message.Action == "send_group_msg_group" {
+		msgType = "group"
+	}
+
 	mylog.Printf("send_group_msg获取到信息类型:%v", msgType)
 	var idInt64 int64
 	var err error
@@ -318,10 +325,17 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 				groupMessage.Timestamp = time.Now().Unix() // 设置时间戳
 			}
 
+			var resp *dto.GroupMessageResponse
 			// 发送组合消息
-			resp, err := apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
+			resp, err = apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
 			if err != nil {
 				mylog.Printf("发送组合消息失败: %v", err)
+				// 错误保存到本地
+				if config.GetSaveError() {
+					mylog.ErrLogToFile("type", "PostGroupMessage")
+					mylog.ErrInterfaceToFile("request", groupMessage)
+					mylog.ErrLogToFile("error", err.Error())
+				}
 			}
 			if err != nil && strings.Contains(err.Error(), `"code":22009`) {
 				mylog.Printf("信息发送失败,加入到队列中,下次被动信息进行发送")
@@ -329,6 +343,21 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 				pair.Group = message.Params.GroupID.(string)
 				pair.GroupMessage = groupMessage
 				echo.PushGlobalStack(pair)
+			} else if err != nil && strings.Contains(err.Error(), `"code":40034025`) {
+				// event_id无效的时候
+				groupMessage.EventID = ""
+				resp, err = apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
+				if err != nil {
+					mylog.Printf("发送组合消息失败: %v", err)
+					// 错误保存到本地
+					if config.GetSaveError() {
+						mylog.ErrLogToFile("type", "PostGroupMessage")
+						mylog.ErrInterfaceToFile("request", groupMessage)
+						mylog.ErrLogToFile("error", err.Error())
+					}
+				}
+			} else if err != nil && strings.Contains(err.Error(), "context deadline exceeded") {
+				postGroupMessageWithRetry(apiv2, message.Params.GroupID.(string), groupMessage)
 			}
 
 			// 发送成功回执
@@ -351,11 +380,18 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 				return "", nil // 或其他错误处理
 			}
 
+			var resp *dto.GroupMessageResponse
 			groupMessage.Timestamp = time.Now().Unix() // 设置时间戳
 			//重新为err赋值
-			resp, err := apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
+			resp, err = apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
 			if err != nil {
 				mylog.Printf("发送文本群组信息失败: %v", err)
+				// 错误保存到本地
+				if config.GetSaveError() {
+					mylog.ErrLogToFile("type", "PostGroupMessage")
+					mylog.ErrInterfaceToFile("request", groupMessage)
+					mylog.ErrLogToFile("error", err.Error())
+				}
 			}
 			if err != nil && strings.Contains(err.Error(), `"code":22009`) {
 				mylog.Printf("信息发送失败,加入到队列中,下次被动信息进行发送")
@@ -363,6 +399,20 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 				pair.Group = message.Params.GroupID.(string)
 				pair.GroupMessage = groupMessage
 				echo.PushGlobalStack(pair)
+			} else if err != nil && strings.Contains(err.Error(), `"code":40034025`) {
+				groupMessage.EventID = ""
+				resp, err = apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
+				if err != nil {
+					mylog.Printf("发送文本群组信息失败: %v", err)
+					// 错误保存到本地
+					if config.GetSaveError() {
+						mylog.ErrLogToFile("type", "PostGroupMessage")
+						mylog.ErrInterfaceToFile("request", groupMessage)
+						mylog.ErrLogToFile("error", err.Error())
+					}
+				}
+			} else if err != nil && strings.Contains(err.Error(), "context deadline exceeded") {
+				postGroupMessageWithRetry(apiv2, message.Params.GroupID.(string), groupMessage)
 			}
 			//发送成功回执
 			retmsg, _ = SendResponse(client, err, &message, resp, api, apiv2)
@@ -401,9 +451,15 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 							return "", nil // 或其他错误处理
 						}
 						//重新为err赋值
-						resp, err := apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
+						resp, err = apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
 						if err != nil {
 							mylog.Printf("发送 MessageToCreate 信息失败: %v", err)
+							// 错误保存到本地
+							if config.GetSaveError() {
+								mylog.ErrLogToFile("type", "PostGroupMessage")
+								mylog.ErrInterfaceToFile("request", groupMessage)
+								mylog.ErrLogToFile("error", err.Error())
+							}
 						}
 						if err != nil && strings.Contains(err.Error(), `"code":22009`) {
 							mylog.Printf("信息发送失败,加入到队列中,下次被动信息进行发送")
@@ -411,6 +467,22 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 							pair.Group = message.Params.GroupID.(string)
 							pair.GroupMessage = groupMessage
 							echo.PushGlobalStack(pair)
+						} else if err != nil && strings.Contains(err.Error(), `"code":40034025`) {
+							//请求参数event_id无效 重试
+							groupMessage.EventID = ""
+							//重新为err赋值
+							resp, err = apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
+							if err != nil {
+								mylog.Printf("发送 MessageToCreate 信息失败 on code 40034025: %v", err)
+								// 错误保存到本地
+								if config.GetSaveError() {
+									mylog.ErrLogToFile("type", "PostGroupMessage")
+									mylog.ErrInterfaceToFile("request", groupMessage)
+									mylog.ErrLogToFile("error", err.Error())
+								}
+							}
+						} else if err != nil && strings.Contains(err.Error(), "context deadline exceeded") {
+							postGroupMessageWithRetry(apiv2, message.Params.GroupID.(string), groupMessage)
 						}
 						//发送成功回执
 						retmsg, _ = SendResponse(client, err, &message, resp, api, apiv2)
@@ -420,7 +492,8 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 				message_return, err := apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), richMediaMessage)
 				if err != nil {
 					mylog.Printf("发送 %s 信息失败_send_group_msg: %v", key, err)
-					if config.GetSendError() { //把报错当作文本发出去
+					//把报错当作文本发出去
+					if config.GetSendError() {
 						msgseq := echo.GetMappingSeq(messageID)
 						echo.AddMappingSeq(messageID, msgseq+1)
 						groupReply := generateGroupMessage(messageID, eventID, nil, err.Error(), msgseq+1, apiv2, message.Params.GroupID.(string))
@@ -442,7 +515,21 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 							pair.Group = message.Params.GroupID.(string)
 							pair.GroupMessage = groupMessage
 							echo.PushGlobalStack(pair)
+						} else if err != nil && strings.Contains(err.Error(), `"code":40034025`) {
+							groupMessage.EventID = ""
+							resp, err = apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
+							if err != nil {
+								mylog.Printf("发送文本报错信息失败: %v", err)
+							}
+						} else if err != nil && strings.Contains(err.Error(), "context deadline exceeded") {
+							postGroupMessageWithRetry(apiv2, message.Params.GroupID.(string), groupMessage)
 						}
+					}
+					// 错误保存到本地
+					if err != nil && config.GetSaveError() {
+						mylog.ErrLogToFile("type", "PostGroupMessage")
+						mylog.ErrInterfaceToFile("request", richMediaMessage)
+						mylog.ErrLogToFile("error", err.Error())
 					}
 				}
 				if message_return != nil && message_return.MediaResponse != nil && message_return.MediaResponse.FileInfo != "" {
@@ -464,6 +551,12 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 					resp, err = apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
 					if err != nil {
 						mylog.Printf("发送图片失败: %v", err)
+						// 错误保存到本地
+						if config.GetSaveError() {
+							mylog.ErrLogToFile("type", "PostGroupMessage")
+							mylog.ErrInterfaceToFile("request", groupMessage)
+							mylog.ErrLogToFile("error", err.Error())
+						}
 					}
 					if err != nil && strings.Contains(err.Error(), `"code":22009`) {
 						mylog.Printf("信息发送失败,加入到队列中,下次被动信息进行发送")
@@ -471,6 +564,14 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 						pair.Group = message.Params.GroupID.(string)
 						pair.GroupMessage = groupMessage
 						echo.PushGlobalStack(pair)
+					} else if err != nil && strings.Contains(err.Error(), `"code":40034025`) {
+						groupMessage.EventID = ""
+						resp, err = apiv2.PostGroupMessage(context.TODO(), message.Params.GroupID.(string), groupMessage)
+						if err != nil {
+							mylog.Printf("发送图片失败: %v", err)
+						}
+					} else if err != nil && strings.Contains(err.Error(), "context deadline exceeded") {
+						postGroupMessageWithRetry(apiv2, message.Params.GroupID.(string), groupMessage)
 					}
 				}
 				//发送成功回执
@@ -1162,6 +1263,594 @@ func generateGroupMessage(id string, eventid string, foundItems map[string][]str
 	return nil
 }
 
+// 上传富媒体信息
+func generatePrivateMessage(id string, eventid string, foundItems map[string][]string, messageText string, msgseq int, apiv2 openapi.OpenAPI, userid string) interface{} {
+	if imageURLs, ok := foundItems["local_image"]; ok && len(imageURLs) > 0 {
+		// 从本地路径读取图片
+		imageData, err := os.ReadFile(imageURLs[0])
+		if err != nil {
+			// 读入文件失败
+			mylog.Printf("Error reading the image from path %s: %v", imageURLs[0], err)
+			// 返回文本信息，提示图片文件不存在
+			return &dto.MessageToCreate{
+				Content: "错误: 图片文件不存在",
+				MsgID:   id,
+				EventID: eventid,
+				MsgSeq:  msgseq,
+				MsgType: 0, // 默认文本类型
+			}
+		}
+		// 首先压缩图片 默认不压缩
+		compressedData, err := images.CompressSingleImage(imageData)
+		if err != nil {
+			mylog.Printf("Error compressing image: %v", err)
+			return &dto.MessageToCreate{
+				Content: "错误: 压缩图片失败",
+				MsgID:   id,
+				EventID: eventid,
+				MsgSeq:  msgseq,
+				MsgType: 0, // 默认文本类型
+			}
+		}
+
+		// base64编码
+		base64Encoded := base64.StdEncoding.EncodeToString(compressedData)
+
+		if config.GetUploadPicV2Base64() {
+			// 直接上传图片返回 MessageToCreate type=7
+			messageToCreate, err := images.CreateAndUploadMediaMessagePrivate(context.TODO(), base64Encoded, eventid, 1, false, "", userid, id, msgseq, apiv2)
+			if err != nil {
+				mylog.Printf("Error messageToCreate: %v", err)
+				return &dto.MessageToCreate{
+					Content: "错误: 上传图片失败",
+					MsgID:   id,
+					EventID: eventid,
+					MsgSeq:  msgseq,
+					MsgType: 0, // 默认文本类型
+				}
+			}
+			return messageToCreate
+		}
+
+		// 上传base64编码的图片并获取其URL
+		imageURL, _, _, err := images.UploadBase64ImageToServer(base64Encoded, apiv2)
+		if err != nil {
+			mylog.Printf("Error uploading base64 encoded image: %v", err)
+			// 如果上传失败，也返回文本信息，提示上传失败
+			return &dto.MessageToCreate{
+				Content: "错误: 上传图片失败",
+				MsgID:   id,
+				EventID: eventid,
+				MsgSeq:  msgseq,
+				MsgType: 0, // 默认文本类型
+			}
+		}
+
+		// 创建RichMediaMessage并返回，当作URL图片处理
+		return &dto.RichMediaMessage{
+			EventID:    id,
+			FileType:   1, // 1代表图片
+			URL:        imageURL,
+			Content:    "", // 这个字段文档没有了
+			SrvSendMsg: false,
+		}
+	} else if RecordURLs, ok := foundItems["local_record"]; ok && len(RecordURLs) > 0 {
+		// 从本地路径读取语音
+		RecordData, err := os.ReadFile(RecordURLs[0])
+		if err != nil {
+			// 读入文件失败
+			mylog.Printf("Error reading the record from path %s: %v", RecordURLs[0], err)
+			// 返回文本信息，提示语音文件不存在
+			return &dto.MessageToCreate{
+				Content: "错误: 语音文件不存在",
+				MsgID:   id,
+				EventID: eventid,
+				MsgSeq:  msgseq,
+				MsgType: 0, // 默认文本类型
+			}
+		}
+		//判断并转码
+		if !silk.IsAMRorSILK(RecordData) {
+			mt, ok := silk.CheckAudio(bytes.NewReader(RecordData))
+			if !ok {
+				mylog.Errorf("voice type error: " + mt)
+				return nil
+			}
+			RecordData = silk.EncoderSilk(RecordData)
+			mylog.Printf("音频转码ing")
+		}
+
+		base64Encoded := base64.StdEncoding.EncodeToString(RecordData)
+		if config.GetUploadPicV2Base64() {
+			// 直接上传图片返回 MessageToCreate type=7
+			messageToCreate, err := images.CreateAndUploadMediaMessagePrivate(context.TODO(), base64Encoded, eventid, 1, false, "", userid, id, msgseq, apiv2)
+			if err != nil {
+				mylog.Printf("Error messageToCreate: %v", err)
+				return &dto.MessageToCreate{
+					Content: "错误: 上传语音失败",
+					MsgID:   id,
+					EventID: eventid,
+					MsgSeq:  msgseq,
+					MsgType: 0, // 默认文本类型
+				}
+			}
+			return messageToCreate
+		}
+
+		// 将解码的语音数据转换回base64格式并上传
+		imageURL, err := images.UploadBase64RecordToServer(base64Encoded)
+		if err != nil {
+			mylog.Printf("failed to upload base64 record: %v", err)
+			return nil
+		}
+		// 创建RichMediaMessage并返回
+		return &dto.RichMediaMessage{
+			EventID:    id,
+			FileType:   3, // 3代表语音
+			URL:        imageURL,
+			Content:    "", // 这个字段文档没有了
+			SrvSendMsg: false,
+		}
+	} else if imageURLs, ok := foundItems["url_image"]; ok && len(imageURLs) > 0 {
+		var newpiclink string
+		if config.GetUrlPicTransfer() {
+			// 从URL下载图片
+			resp, err := http.Get("http://" + imageURLs[0])
+			if err != nil {
+				mylog.Printf("Error downloading the image: %v", err)
+				return &dto.MessageToCreate{
+					Content: "错误: 下载图片失败",
+					MsgID:   id,
+					EventID: eventid,
+					MsgSeq:  msgseq,
+					MsgType: 0, // 默认文本类型
+				}
+			}
+			defer resp.Body.Close()
+
+			// 读取图片数据
+			imageData, err := io.ReadAll(resp.Body)
+			if err != nil {
+				mylog.Printf("Error reading the image data: %v", err)
+				return &dto.MessageToCreate{
+					Content: "错误: 读取图片数据失败",
+					MsgID:   id,
+					EventID: eventid,
+					MsgSeq:  msgseq,
+					MsgType: 0,
+				}
+			}
+
+			// 转换为base64
+			base64Encoded := base64.StdEncoding.EncodeToString(imageData)
+
+			if config.GetUploadPicV2Base64() {
+				// 直接上传图片返回 MessageToCreate type=7
+				messageToCreate, err := images.CreateAndUploadMediaMessagePrivate(context.TODO(), base64Encoded, eventid, 1, false, "", userid, id, msgseq, apiv2)
+				if err != nil {
+					mylog.Printf("Error messageToCreate: %v", err)
+					return &dto.MessageToCreate{
+						Content: "错误: 上传图片失败",
+						MsgID:   id,
+						EventID: eventid,
+						MsgSeq:  msgseq,
+						MsgType: 0, // 默认文本类型
+					}
+				}
+				return messageToCreate
+			}
+
+			// 上传图片并获取新的URL
+			newURL, _, _, err := images.UploadBase64ImageToServer(base64Encoded, apiv2)
+			if err != nil {
+				mylog.Printf("Error uploading base64 encoded image: %v", err)
+				return &dto.MessageToCreate{
+					Content: "错误: 上传图片失败",
+					MsgID:   id,
+					EventID: eventid,
+					MsgSeq:  msgseq,
+					MsgType: 0,
+				}
+			}
+			// 将图片链接缩短 避免 url not allow
+			// if config.GetLotusValue() {
+			// 	// 连接到另一个gensokyo
+			// 	newURL = url.GenerateShortURL(newURL)
+			// } else {
+			// 	// 自己是主节点
+			// 	newURL = url.GenerateShortURL(newURL)
+			// 	// 使用getBaseURL函数来获取baseUrl并与newURL组合
+			// 	newURL = url.GetBaseURL() + "/url/" + newURL
+			// }
+			newpiclink = newURL
+		} else {
+			newpiclink = "http://" + imageURLs[0]
+		}
+
+		// 发链接图片
+		return &dto.RichMediaMessage{
+			EventID:    id,
+			FileType:   1,          // 1代表图片
+			URL:        newpiclink, // 新图片链接
+			Content:    "",         // 这个字段文档没有了
+			SrvSendMsg: false,
+		}
+	} else if imageURLs, ok := foundItems["url_images"]; ok && len(imageURLs) > 0 {
+		var newpiclink string
+		if config.GetUrlPicTransfer() {
+			// 从URL下载图片
+			resp, err := http.Get("https://" + imageURLs[0])
+			if err != nil {
+				mylog.Printf("Error downloading the image: %v", err)
+				return &dto.MessageToCreate{
+					Content: "错误: 下载图片失败",
+					MsgID:   id,
+					EventID: eventid,
+					MsgSeq:  msgseq,
+					MsgType: 0, // 默认文本类型
+				}
+			}
+			defer resp.Body.Close()
+
+			// 读取图片数据
+			imageData, err := io.ReadAll(resp.Body)
+			if err != nil {
+				mylog.Printf("Error reading the image data: %v", err)
+				return &dto.MessageToCreate{
+					Content: "错误: 读取图片数据失败",
+					MsgID:   id,
+					EventID: eventid,
+					MsgSeq:  msgseq,
+					MsgType: 0,
+				}
+			}
+
+			// 转换为base64
+			base64Encoded := base64.StdEncoding.EncodeToString(imageData)
+
+			if config.GetUploadPicV2Base64() {
+				// 直接上传图片返回 MessageToCreate type=7
+				messageToCreate, err := images.CreateAndUploadMediaMessagePrivate(context.TODO(), base64Encoded, eventid, 1, false, "", userid, id, msgseq, apiv2)
+				if err != nil {
+					mylog.Printf("Error messageToCreate: %v", err)
+					return &dto.MessageToCreate{
+						Content: "错误: 上传图片失败",
+						MsgID:   id,
+						EventID: eventid,
+						MsgSeq:  msgseq,
+						MsgType: 0, // 默认文本类型
+					}
+				}
+				return messageToCreate
+			}
+
+			// 上传图片并获取新的URL
+			newURL, _, _, err := images.UploadBase64ImageToServer(base64Encoded, apiv2)
+			if err != nil {
+				mylog.Printf("Error uploading base64 encoded image: %v", err)
+				return &dto.MessageToCreate{
+					Content: "错误: 上传图片失败",
+					MsgID:   id,
+					EventID: eventid,
+					MsgSeq:  msgseq,
+					MsgType: 0,
+				}
+			}
+			// 将图片链接缩短 避免 url not allow
+			// if config.GetLotusValue() {
+			// 	// 连接到另一个gensokyo
+			// 	newURL = url.GenerateShortURL(newURL)
+			// } else {
+			// 	// 自己是主节点
+			// 	newURL = url.GenerateShortURL(newURL)
+			// 	// 使用getBaseURL函数来获取baseUrl并与newURL组合
+			// 	newURL = url.GetBaseURL() + "/url/" + newURL
+			// }
+			newpiclink = newURL
+		} else {
+			newpiclink = "https://" + imageURLs[0]
+		}
+
+		// 发链接图片
+		return &dto.RichMediaMessage{
+			EventID:    id,
+			FileType:   1,          // 1代表图片
+			URL:        newpiclink, // 新图片链接
+			Content:    "",         // 这个字段文档没有了
+			SrvSendMsg: false,
+		}
+	} else if voiceURLs, ok := foundItems["base64_record"]; ok && len(voiceURLs) > 0 {
+		// 适配base64 slik
+		if base64_record, ok := foundItems["base64_record"]; ok && len(base64_record) > 0 {
+			// 解码base64语音数据
+			fileRecordData, err := base64.StdEncoding.DecodeString(base64_record[0])
+			if err != nil {
+				mylog.Printf("failed to decode base64 record: %v", err)
+				return nil
+			}
+			//判断并转码
+			if !silk.IsAMRorSILK(fileRecordData) {
+				mt, ok := silk.CheckAudio(bytes.NewReader(fileRecordData))
+				if !ok {
+					mylog.Errorf("voice type error: " + mt)
+					return nil
+				}
+				fileRecordData = silk.EncoderSilk(fileRecordData)
+				mylog.Printf("音频转码ing")
+			}
+			// 将解码的语音数据转换回base64格式并上传
+			imageURL, err := images.UploadBase64RecordToServer(base64.StdEncoding.EncodeToString(fileRecordData))
+			if err != nil {
+				mylog.Printf("failed to upload base64 record: %v", err)
+				return nil
+			}
+			// 创建RichMediaMessage并返回
+			return &dto.RichMediaMessage{
+				EventID:    id,
+				FileType:   3, // 3代表语音
+				URL:        imageURL,
+				Content:    "", // 这个字段文档没有了
+				SrvSendMsg: false,
+			}
+		}
+	} else if imageURLs, ok := foundItems["url_record"]; ok && len(imageURLs) > 0 {
+		// 从URL下载语音
+		resp, err := http.Get("http://" + imageURLs[0])
+		if err != nil {
+			mylog.Printf("Error downloading the record: %v", err)
+			return &dto.MessageToCreate{
+				Content: "错误: 下载语音失败",
+				MsgID:   id,
+				MsgSeq:  msgseq,
+				MsgType: 0, // 默认文本类型
+			}
+		}
+		defer resp.Body.Close()
+
+		// 读取语音数据
+		recordData, err := io.ReadAll(resp.Body)
+		if err != nil {
+			mylog.Printf("Error reading the record data: %v", err)
+			return &dto.MessageToCreate{
+				Content: "错误: 读取语音数据失败",
+				MsgID:   id,
+				EventID: eventid,
+				MsgSeq:  msgseq,
+				MsgType: 0,
+			}
+		}
+		//判断并转码
+		if !silk.IsAMRorSILK(recordData) {
+			mt, ok := silk.CheckAudio(bytes.NewReader(recordData))
+			if !ok {
+				mylog.Errorf("voice type error: " + mt)
+				return nil
+			}
+			recordData = silk.EncoderSilk(recordData)
+			mylog.Printf("音频转码ing")
+		}
+		// 转换为base64
+		base64Encoded := base64.StdEncoding.EncodeToString(recordData)
+
+		// 上传语音并获取新的URL
+		newURL, err := images.UploadBase64RecordToServer(base64Encoded)
+		if err != nil {
+			mylog.Printf("Error uploading base64 encoded image: %v", err)
+			return &dto.MessageToCreate{
+				Content: "错误: 上传语音失败",
+				MsgID:   id,
+				EventID: eventid,
+				MsgSeq:  msgseq,
+				MsgType: 0,
+			}
+		}
+
+		// 发链接语音
+		return &dto.RichMediaMessage{
+			EventID:    id,
+			FileType:   3,      // 3代表语音
+			URL:        newURL, // 新语音链接
+			Content:    "",     // 这个字段文档没有了
+			SrvSendMsg: false,
+		}
+	} else if imageURLs, ok := foundItems["url_records"]; ok && len(imageURLs) > 0 {
+		// 从URL下载语音
+		resp, err := http.Get("https://" + imageURLs[0])
+		if err != nil {
+			mylog.Printf("Error downloading the record: %v", err)
+			return &dto.MessageToCreate{
+				Content: "错误: 下载语音失败",
+				MsgID:   id,
+				EventID: eventid,
+				MsgSeq:  msgseq,
+				MsgType: 0, // 默认文本类型
+			}
+		}
+		defer resp.Body.Close()
+
+		// 读取语音数据
+		recordData, err := io.ReadAll(resp.Body)
+		if err != nil {
+			mylog.Printf("Error reading the record data: %v", err)
+			return &dto.MessageToCreate{
+				Content: "错误: 读取语音数据失败",
+				MsgID:   id,
+				EventID: eventid,
+				MsgSeq:  msgseq,
+				MsgType: 0,
+			}
+		}
+		//判断并转码
+		if !silk.IsAMRorSILK(recordData) {
+			mt, ok := silk.CheckAudio(bytes.NewReader(recordData))
+			if !ok {
+				mylog.Errorf("voice type error: " + mt)
+				return nil
+			}
+			recordData = silk.EncoderSilk(recordData)
+			mylog.Printf("音频转码ing")
+		}
+		// 转换为base64
+		base64Encoded := base64.StdEncoding.EncodeToString(recordData)
+
+		// 上传语音并获取新的URL
+		newURL, err := images.UploadBase64RecordToServer(base64Encoded)
+		if err != nil {
+			mylog.Printf("Error uploading base64 encoded image: %v", err)
+			return &dto.MessageToCreate{
+				Content: "错误: 上传语音失败",
+				MsgID:   id,
+				EventID: eventid,
+				MsgSeq:  msgseq,
+				MsgType: 0,
+			}
+		}
+
+		// 发链接语音
+		return &dto.RichMediaMessage{
+			EventID:    id,
+			FileType:   3,      // 3代表语音
+			URL:        newURL, // 新语音链接
+			Content:    "",     // 这个字段文档没有了
+			SrvSendMsg: false,
+		}
+	} else if base64Image, ok := foundItems["base64_image"]; ok && len(base64Image) > 0 {
+		// todo 适配base64图片
+		//因为QQ群没有 form方式上传,所以在gensokyo内置了图床,需公网,或以lotus方式连接位于公网的gensokyo
+		//要正确的开放对应的端口和设置正确的ip地址在config,这对于一般用户是有一些难度的
+		// 解码base64图片数据
+		fileImageData, err := base64.StdEncoding.DecodeString(base64Image[0])
+		if err != nil {
+			mylog.Printf("failed to decode base64 image: %v", err)
+			return nil
+		}
+
+		// 首先压缩图片 默认不压缩
+		compressedData, err := images.CompressSingleImage(fileImageData)
+		if err != nil {
+			mylog.Printf("Error compressing image: %v", err)
+			return &dto.MessageToCreate{
+				Content: "错误: 压缩图片失败",
+				MsgID:   id,
+				EventID: eventid,
+				MsgSeq:  msgseq,
+				MsgType: 0, // 默认文本类型
+			}
+		}
+
+		base64Encoded := base64.StdEncoding.EncodeToString(compressedData)
+		if config.GetUploadPicV2Base64() {
+			// 直接上传图片返回 MessageToCreate type=7
+			messageToCreate, err := images.CreateAndUploadMediaMessagePrivate(context.TODO(), base64Encoded, eventid, 1, false, "", userid, id, msgseq, apiv2)
+			if err != nil {
+				mylog.Printf("Error messageToCreate: %v", err)
+				return &dto.MessageToCreate{
+					Content: "错误: 上传图片失败",
+					MsgID:   id,
+					EventID: eventid,
+					MsgSeq:  msgseq,
+					MsgType: 0, // 默认文本类型
+				}
+			}
+			return messageToCreate
+		}
+
+		// 将解码的图片数据转换回base64格式并上传
+		imageURL, _, _, err := images.UploadBase64ImageToServer(base64Encoded, apiv2)
+		if err != nil {
+			mylog.Printf("failed to upload base64 image: %v", err)
+			return nil
+		}
+		// 创建RichMediaMessage并返回
+		return &dto.RichMediaMessage{
+			EventID:    id,
+			FileType:   1, // 1代表图片
+			URL:        imageURL,
+			Content:    "", // 这个字段文档没有了
+			SrvSendMsg: false,
+		}
+	} else if mdContent, ok := foundItems["markdown"]; ok && len(mdContent) > 0 {
+		// 解码base64 markdown数据
+		mdData, err := base64.StdEncoding.DecodeString(mdContent[0])
+		if err != nil {
+			mylog.Printf("failed to decode base64 md: %v", err)
+			return nil
+		}
+		markdown, keyboard, err := parseMDData(mdData)
+		if err != nil {
+			mylog.Printf("failed to parseMDData: %v", err)
+			return nil
+		}
+		return &dto.MessageToCreate{
+			Content:  "markdown",
+			MsgID:    id,
+			EventID:  eventid,
+			MsgSeq:   msgseq,
+			Markdown: markdown,
+			Keyboard: keyboard,
+			MsgType:  2,
+		}
+	} else if qqmusic, ok := foundItems["qqmusic"]; ok && len(qqmusic) > 0 {
+		// 转换qq音乐id到一个md
+		music_id := qqmusic[0]
+		markdown, keyboard, err := parseQQMuiscMDData(music_id)
+		if err != nil {
+			mylog.Printf("failed to parseMDData: %v", err)
+			return nil
+		}
+		if markdown != nil {
+			return &dto.MessageToCreate{
+				Content:  "markdown",
+				MsgID:    id,
+				EventID:  eventid,
+				MsgSeq:   msgseq,
+				Markdown: markdown,
+				Keyboard: keyboard,
+				MsgType:  2,
+			}
+		} else {
+			return &dto.MessageToCreate{
+				Content:  "markdown",
+				MsgID:    id,
+				EventID:  eventid,
+				MsgSeq:   msgseq,
+				Keyboard: keyboard,
+				MsgType:  2,
+			}
+		}
+	} else if videoURL, ok := foundItems["url_video"]; ok && len(videoURL) > 0 {
+		newvideolink := "http://" + videoURL[0]
+		// 发链接视频 http
+		return &dto.RichMediaMessage{
+			EventID:    id,
+			FileType:   2,            // 2代表视频
+			URL:        newvideolink, // 新图片链接
+			Content:    "",           // 这个字段文档没有了
+			SrvSendMsg: false,
+		}
+	} else if videoURLs, ok := foundItems["url_videos"]; ok && len(videoURLs) > 0 {
+		newvideolink := "https://" + videoURLs[0]
+		// 发链接视频 https
+		return &dto.RichMediaMessage{
+			EventID:    id,
+			FileType:   2,            // 2代表视频
+			URL:        newvideolink, // 新图片链接
+			Content:    "",           // 这个字段文档没有了
+			SrvSendMsg: false,
+		}
+	} else {
+		// 返回文本信息
+		return &dto.MessageToCreate{
+			Content: messageText,
+			MsgID:   id,
+			EventID: eventid,
+			MsgSeq:  msgseq,
+			MsgType: 0, // 默认文本类型
+		}
+	}
+	return nil
+}
+
 // 通过user_id获取类型
 func GetMessageTypeByUserid(appID string, userID interface{}) string {
 	// 从appID和userID生成key
@@ -1256,6 +1945,12 @@ func uploadMedia(ctx context.Context, groupID string, richMediaMessage *dto.Rich
 	// 调用API来上传媒体
 	messageReturn, err := apiv2.PostGroupMessage(ctx, groupID, richMediaMessage)
 	if err != nil {
+		// 错误保存到本地
+		if config.GetSaveError() {
+			mylog.ErrLogToFile("type", "PostGroupMessage")
+			mylog.ErrInterfaceToFile("request", richMediaMessage)
+			mylog.ErrLogToFile("error", err.Error())
+		}
 		return "", err
 	}
 	// 返回上传后的FileInfo
@@ -1279,6 +1974,12 @@ func SendStackMessages(apiv2 openapi.OpenAPI, messageid string, GroupID string) 
 			_, err := apiv2.PostGroupMessage(context.TODO(), pair.Group, pair.GroupMessage)
 			if err != nil {
 				mylog.Printf("发送组合消息失败: %v", err)
+				// 错误保存到本地
+				if config.GetSaveError() {
+					mylog.ErrLogToFile("type", "PostGroupMessage")
+					mylog.ErrInterfaceToFile("request", pair.GroupMessage)
+					mylog.ErrLogToFile("error", err.Error())
+				}
 			} else {
 				echo.RemoveFromGlobalStack(i)
 			}
@@ -1330,9 +2031,13 @@ func auto_md(message callapi.ActionMessage, messageText string, richMediaMessage
 			// 处理 Markdown
 			CustomTemplateID := config.GetCustomTemplateID()
 			imgURL := richMediaMessage.URL
+			// 处理来自nt图床的链接
+			imgURL = processImgUrl(imgURL)
 			height, width, err := images.GetImageDimensions(imgURL)
 			if err != nil {
-				mylog.Printf("获取图片宽高出错")
+				height = 480
+				width = 480
+				mylog.Printf("获取图片宽高出错,默认宽高480x480")
 			}
 			imgDesc := fmt.Sprintf("图片 #%dpx #%dpx", width, height)
 
@@ -1426,9 +2131,28 @@ func auto_md(message callapi.ActionMessage, messageText string, richMediaMessage
 					}
 				}
 
+				//在虚拟二级指令白名单,设置@前缀,代表仅触发其本身
+				//如果@前缀指令包含了空格 则只显示和应用空格右侧的文本
+				if strings.HasPrefix(whiteLabel, "@") {
+					// 移除whiteLabel前端的"@"
+					whiteLabel = strings.TrimPrefix(whiteLabel, "@")
+					// 找到最后一个空格的位置
+					lastSpaceIndex := strings.LastIndex(whiteLabel, " ")
+					if lastSpaceIndex != -1 {
+						// 先存储空格左侧的字符串到dataLabel
+						dataLabel = whiteLabel[:lastSpaceIndex]
+						// 然后更新whiteLabel为空格右侧的子字符串
+						whiteLabel = whiteLabel[lastSpaceIndex+1:]
+					} else {
+						// 如果没有找到空格，将整个字符串赋给dataLabel
+						dataLabel = whiteLabel
+					}
+				}
+
 				var actiontype keyboard.ActionType
 				var permission *keyboard.Permission
 				var actiondata string
+				var skip bool
 				//检查是否设置了enter数组
 				enter := checkDataLabelPrefix(dataLabel)
 				//例外规则
@@ -1481,6 +2205,22 @@ func auto_md(message callapi.ActionMessage, messageText string, richMediaMessage
 							Type: 2, // 所有人可操作
 						}
 					}
+				case strings.HasPrefix(whiteLabel, "$"):
+					// 只有5%的概率执行以下代码
+					if rand.Float64() < 0.05 {
+						// 分割whiteLabel来获取显示内容和URL
+						parts := strings.SplitN(whiteLabel[1:], " ", 2) // [1:] 用于去除白名单标签开头的'%'
+						if len(parts) == 2 {
+							whiteLabel = parts[0] // 显示内容
+							actiondata = parts[1] // URL
+							actiontype = 0        // 链接类型
+							permission = &keyboard.Permission{
+								Type: 2, // 所有人可操作
+							}
+						}
+					} else {
+						skip = true
+					}
 				case strings.HasPrefix(whiteLabel, "^"):
 					// 分割whiteLabel来获取显示内容和URL
 					parts := strings.SplitN(whiteLabel[1:], " ", 2) // [1:] 用于去除白名单标签开头的'^'
@@ -1500,32 +2240,34 @@ func auto_md(message callapi.ActionMessage, messageText string, richMediaMessage
 					}
 				}
 
-				// 创建按钮
-				button := &keyboard.Button{
-					RenderData: &keyboard.RenderData{
-						Label:        whiteLabel,
-						VisitedLabel: whiteLabel,
-						Style:        1, //蓝色边缘
-					},
-					Action: &keyboard.Action{
-						Type:          actiontype,
-						Permission:    permission,
-						Data:          actiondata,
-						UnsupportTips: "请升级新版手机QQ",
-						Enter:         enter,
-					},
-				}
+				if !skip {
+					// 创建按钮
+					button := &keyboard.Button{
+						RenderData: &keyboard.RenderData{
+							Label:        whiteLabel,
+							VisitedLabel: whiteLabel,
+							Style:        1, //蓝色边缘
+						},
+						Action: &keyboard.Action{
+							Type:          actiontype,
+							Permission:    permission,
+							Data:          actiondata,
+							UnsupportTips: "请升级新版手机QQ",
+							Enter:         enter,
+						},
+					}
 
-				// 如果当前行为空或已满（4个按钮），则创建一个新行
-				if currentRow == nil || buttonCount == 4 {
-					currentRow = &keyboard.Row{}
-					customKeyboard.Rows = append(customKeyboard.Rows, currentRow)
-					buttonCount = 0 // 重置按钮计数
-				}
+					// 如果当前行为空或已满（4个按钮），则创建一个新行
+					if currentRow == nil || buttonCount == 4 {
+						currentRow = &keyboard.Row{}
+						customKeyboard.Rows = append(customKeyboard.Rows, currentRow)
+						buttonCount = 0 // 重置按钮计数
+					}
 
-				// 将按钮添加到当前行
-				currentRow.Buttons = append(currentRow.Buttons, button)
-				buttonCount++
+					// 将按钮添加到当前行
+					currentRow.Buttons = append(currentRow.Buttons, button)
+					buttonCount++
+				}
 			}
 			// 在循环结束后，最后一行可能不满4个按钮，但已经被正确处理
 
@@ -1586,4 +2328,49 @@ func checkDataLabelPrefixExcept(whiteLabel string) bool {
 		}
 	}
 	return false
+}
+
+func processImgUrl(input string) string {
+	// 将指定的URL前缀替换
+	processed := strings.ReplaceAll(input, "https://multimedia.nt.qq.com.cn", "http://multimedia.nt.qq.com")
+
+	// 仅当输入字符串包含 "multimedia.nt.qq" 时，才替换下划线为 "%5f"
+	if strings.Contains(processed, "multimedia.nt.qq") {
+		processed = strings.ReplaceAll(processed, "_", "%5f")
+	}
+
+	return processed
+}
+
+func postGroupMessageWithRetry(apiv2 openapi.OpenAPI, groupID string, groupMessage *dto.MessageToCreate) (resp *dto.GroupMessageResponse, err error) {
+	retryCount := 3 // 设置最大重试次数为3
+	for i := 0; i < retryCount; i++ {
+		// 递增msgid
+		msgseq := echo.GetMappingSeq(groupMessage.MsgID)
+		echo.AddMappingSeq(groupMessage.MsgID, msgseq+1)
+		groupMessage.MsgSeq = msgseq + 1
+
+		resp, err = apiv2.PostGroupMessage(context.TODO(), groupID, groupMessage)
+		if err != nil && strings.Contains(err.Error(), "context deadline exceeded") {
+			mylog.Printf("超时重试第 %d 次: %v", i+1, err)
+			if config.GetSaveError() {
+				mylog.ErrLogToFile("type", "PostGroupMessage-context-deadline-exceeded-retry-"+strconv.Itoa(i+1))
+				mylog.ErrInterfaceToFile("request", groupMessage)
+				mylog.ErrLogToFile("error", err.Error())
+			}
+			time.Sleep(1 * time.Second) // 重试间隔1秒
+			continue
+		} else {
+			mylog.Printf("超时重试第 %d 次成功: %v", i+1, err)
+			if config.GetSaveError() {
+				mylog.ErrLogToFile("type", "PostGroupMessage-context-deadline-exceeded-retry-"+strconv.Itoa(i+1)+"-successed")
+				mylog.ErrInterfaceToFile("request", groupMessage)
+				if resp != nil {
+					mylog.ErrLogToFile("msgid", resp.Message.ID)
+				}
+			}
+		}
+		break
+	}
+	return resp, err
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/hoshinonyaruko/gensokyo/acnode"
 	"github.com/hoshinonyaruko/gensokyo/botstats"
 	"github.com/hoshinonyaruko/gensokyo/config"
+	"github.com/hoshinonyaruko/gensokyo/echo"
 	"github.com/hoshinonyaruko/gensokyo/handlers"
 	"github.com/hoshinonyaruko/gensokyo/httpapi"
 	"github.com/hoshinonyaruko/gensokyo/idmap"
@@ -48,6 +49,11 @@ func main() {
 	// 定义faststart命令行标志。默认为false。
 	fastStart := flag.Bool("faststart", false, "start without initialization if set")
 	tidy := flag.Bool("tidy", false, "backup and tidy your config.yml")
+	cleanids := flag.Bool("clean_ids", false, "clean msg_id in ids bucket.")
+	delids := flag.Bool("del_ids", false, "delete ids bucket, must backup idmap.db first!")
+	delcache := flag.Bool("del_cache", false, "delete cache bucket, it is safe")
+	compaction := flag.Bool("compaction", false, "compaction for apply db changes.")
+	m := flag.Bool("m", false, "Maintenance mode")
 
 	// 解析命令行参数到定义的标志。
 	flag.Parse()
@@ -116,6 +122,16 @@ func main() {
 	loggerAdapter := mylog.NewMyLogAdapter(logLevel, config.GetSaveLogs())
 	botgo.SetLogger(loggerAdapter)
 
+	if *m {
+		// 维护模式
+		conf.Settings.WsAddress = []string{"ws://127.0.0.1:50000"}
+		conf.Settings.EnableWsServer = false
+	}
+
+	// 创建webui数据库
+	webui.InitializeDB()
+	defer webui.CloseDB()
+
 	if conf.Settings.AppID == 12345 {
 		// 输出天蓝色文本
 		cyan := color.New(color.FgCyan)
@@ -182,19 +198,41 @@ func main() {
 		} else {
 			log.Printf("自定义ac地址模式...请从日志手动获取bot的真实id并设置,不然at会不正常")
 		}
-		if !nologin {
 
+		if !nologin {
 			//创建idmap服务器 数据库
 			idmap.InitializeDB()
 			//创建botstats数据库
 			botstats.InitializeDB()
-			//创建webui数据库
-			webui.InitializeDB()
 
 			//关闭时候释放数据库
 			defer idmap.CloseDB()
 			defer botstats.CloseDB()
-			defer webui.CloseDB()
+
+			if *delids {
+				mylog.Printf("开始删除ids\n")
+				idmap.DeleteBucket("ids")
+				mylog.Printf("ids删除完成\n")
+				return
+			}
+			if *delcache {
+				mylog.Printf("开始删除cache\n")
+				idmap.DeleteBucket("cache")
+				mylog.Printf("cache删除完成\n")
+				return
+			}
+			if *cleanids {
+				mylog.Printf("开始清理ids中的msg_id\n")
+				idmap.CleanBucket("ids")
+				mylog.Printf("ids清理完成\n")
+				return
+			}
+			if *compaction {
+				mylog.Printf("开始整理idmap.db\n")
+				idmap.CompactionIdmap()
+				mylog.Printf("idmap.db整理完成\n")
+				return
+			}
 
 			if configURL == "" && !fix11300 { //初始化handlers
 				handlers.BotID = me.ID
@@ -310,8 +348,24 @@ func main() {
 					p = Processor.NewProcessor(api, apiV2, &conf.Settings, wsClients)
 				}
 			} else {
-				log.Println("提示,目前只启动了正向ws或httpapi")
+				// p一定需要初始化
 				p = Processor.NewProcessorV2(api, apiV2, &conf.Settings)
+				// 如果只启动了http api
+				if !conf.Settings.EnableWsServer {
+					if conf.Settings.HttpAddress != "" {
+						// 对全局生效
+						conf.Settings.HttpOnlyBot = true
+						log.Println("提示,目前只启动了httpapi,正反向ws均未配置.")
+					} else {
+						log.Println("提示,目前你配置了个寂寞,httpapi没设置,正反ws都没配置.")
+					}
+				} else {
+					if conf.Settings.HttpAddress != "" {
+						log.Println("提示,目前启动了正向ws和httpapi,未连接反向ws")
+					} else {
+						log.Println("提示,目前启动了正向ws,未连接反向ws,httpapi未开启")
+					}
+				}
 			}
 		} else {
 			// 设置颜色为红色
@@ -319,7 +373,6 @@ func main() {
 			// 输出红色文本
 			red.Println("请设置正确的appid、token、clientsecret再试")
 		}
-
 	}
 
 	//图片上传 调用次数限制
@@ -481,6 +534,11 @@ func main() {
 		}()
 	}
 
+	//杂七杂八的地方
+	if conf.Settings.MemoryMsgid {
+		echo.StartCleanupRoutine()
+	}
+
 	// 使用color库输出天蓝色的文本
 	cyan := color.New(color.FgCyan)
 	cyan.Printf("欢迎来到Gensokyo, 控制台地址: %s\n", webuiURL)
@@ -501,6 +559,11 @@ func main() {
 		if err != nil {
 			log.Printf("Error closing WebSocket connection: %v\n", err)
 		}
+	}
+
+	// 停止内存清理线程
+	if conf.Settings.MemoryMsgid {
+		echo.StopCleanupRoutine()
 	}
 
 	// 关闭BoltDB数据库
