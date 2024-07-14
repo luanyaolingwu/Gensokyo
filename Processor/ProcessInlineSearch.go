@@ -4,7 +4,9 @@ package Processor
 import (
 	"context"
 	"fmt"
+	"log"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -52,10 +54,27 @@ func (p *Processors) ProcessInlineSearch(data *dto.WSInteractionData) error {
 	// 构造echostr，包括AppID，原始的s变量和当前时间戳
 	echostr := fmt.Sprintf("%s_%d_%d", AppIDString, s, currentTimeMillis)
 
-	//这里处理自动handle回调回应
+	// 这里处理自动handle回调回应
 	if config.GetAutoPutInteraction() {
-		DelayedPutInteraction(p.Api, data.ID, fromuid, fromgid)
+		exceptions := config.GetPutInteractionExcept() // 会返回一个string[]，即例外列表
+
+		shouldCall := true // 默认应该调用DelayedPutInteraction，除非下面的条件匹配
+
+		// 判断，data.Data.Resolved.ButtonData 是否以返回的string[]中的任意成员开头
+		for _, prefix := range exceptions {
+			if strings.HasPrefix(data.Data.Resolved.ButtonData, prefix) {
+				shouldCall = false // 如果匹配到任何一个前缀，设置shouldCall为false
+				break              // 找到匹配项，无需继续检查
+			}
+		}
+
+		// 如果data.Data.Resolved.ButtonData不以返回的string[]中的任意成员开头，
+		// 则调用DelayedPutInteraction，否则不调用
+		if shouldCall {
+			DelayedPutInteraction(p.Api, data.ID, fromuid, fromgid)
+		}
 	}
+
 	if config.GetIdmapPro() {
 		//将真实id转为int userid64
 		GroupID64, userid64, err = idmap.StoreIDv2Pro(fromgid, fromuid)
@@ -136,10 +155,22 @@ func (p *Processors) ProcessInlineSearch(data *dto.WSInteractionData) error {
 				IsBindedGroupId = idmap.CheckValuev2(GroupID64)
 			}
 
-			//平台事件,不是真实信息,无需messageID
-			messageID64 := 123
+			//映射str的messageID到int
+			var messageID64 int64
+			if config.GetMemoryMsgid() {
+				messageID64, err = echo.StoreCacheInMemory(data.ID)
+				if err != nil {
+					log.Fatalf("Error storing ID: %v", err)
+				}
+			} else {
+				messageID64, err = idmap.StoreCachev2(data.ID)
+				if err != nil {
+					log.Fatalf("Error storing ID: %v", err)
+				}
+			}
 
 			messageID := int(messageID64)
+
 			var selfid64 int64
 			if config.GetUseUin() {
 				selfid64 = config.GetUinint64()

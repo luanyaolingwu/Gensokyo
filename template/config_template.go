@@ -52,6 +52,9 @@ settings:
   lotus: false                                       # lotus特性默认为false,当为true时,将会连接到另一个lotus为false的gensokyo。使用它提供的图床和idmaps服务(场景:同一个机器人在不同服务器运行,或内网需要发送base64图)。如果需要发送base64图片,需要设置正确的公网server_dir和开放对应的port, lotus鉴权 设置后,从gsk需要保持相同密码来访问主gsk
   lotus_password : "" 
   lotus_without_idmaps: false       #lotus只通过url,图片上传,语音,不通过id转换,在本地当前gsk维护idmaps转换.
+  lotus_without_uploadpic : false   #lotus只转换id,不进行图片上传.
+  lotus_grpc : false                #实验特性,使用grpc进行lotus连接.提高性能.
+  lotus_grpc_port : 50051           #grpc的端口,连接与被连接需保持一致.并且在防火墙放通此端口.
 
   #增强配置项                                           
   master_id : ["1","2"]             #群场景尚未开放获取管理员和列表能力,手动从日志中获取需要设置为管理,的user_id并填入(适用插件有权限判断场景)
@@ -151,11 +154,13 @@ settings:
   transform_api_ids : true          #对get_group_menmber_list\get_group_member_info\get_group_list生效,是否在其中返回转换后的值(默认转换,不转换请自行处理插件逻辑,比如调用gsk的http api转换)
   auto_put_interaction : false      #自动回应按钮回调的/interactions/{interaction_id} 注本api需要邮件申请,详细方法参考群公告:196173384
   put_interaction_delay : 0         #单位毫秒 表示回应已收到回调类型的按钮的毫秒数 会按用户进行区分 非全局delay
+  put_interaction_except : []       #自动回复按钮的例外,当你想要自己用api回复,回复特殊状态时,将指令前缀填入进去(根据按钮的data字段判断的)
 
   #Onebot修改
   twoway_echo : false               #是否采用双向echo,根据机器人选择,獭獭\早苗 true 红色问答\椛椛 或者其他 请使用 false
-  array: false                                       # 连接trss云崽请开启array
+  array: false                      #连接trss云崽请开启array,是否以segment形式上报信息.
   native_ob11 : false               #如果你的机器人收到事件报错,请开启此选项增加兼容性
+  disable_error_chan : false        #禁用ws断开时候将信息放入补发频道,当信息非常多时可能导致冲垮应用端,可以设置本选项为true.
 
   #URL相关
   visible_ip : false                #转换url时,如果server_dir是ip true将以ip形式发出url 默认隐藏url 将server_dir配置为自己域名可以转换url

@@ -34,12 +34,15 @@ type Settings struct {
 	HashID                                   bool   `yaml:"hash_id"`
 	IdmapPro                                 bool   `yaml:"idmap_pro"`
 	//gensokyo互联类
-	Server_dir         string `yaml:"server_dir"`
-	Port               string `yaml:"port"`
-	BackupPort         string `yaml:"backup_port"`
-	Lotus              bool   `yaml:"lotus"`
-	LotusPassword      string `yaml:"lotus_password"`
-	LotusWithoutIdmaps bool   `yaml:"lotus_without_idmaps"`
+	Server_dir            string `yaml:"server_dir"`
+	Port                  string `yaml:"port"`
+	BackupPort            string `yaml:"backup_port"`
+	Lotus                 bool   `yaml:"lotus"`
+	LotusPassword         string `yaml:"lotus_password"`
+	LotusWithoutIdmaps    bool   `yaml:"lotus_without_idmaps"`
+	LotusWithoutUploadPic bool   `yaml:"lotus_without_uploadpic"`
+	LotusGrpc             bool   `yaml:"lotus_grpc"`
+	LotusGrpcPort         int    `yaml:"lotus_grpc_port"`
 	//增强配置
 	MasterID         []string `yaml:"master_id"`
 	RecordSampleRate int      `yaml:"record_sampleRate"`
@@ -106,20 +109,22 @@ type Settings struct {
 	//增长营销类
 	SelfIntroduce []string `yaml:"self_introduce"`
 	//api修改
-	GetGroupListAllGuilds    bool   `yaml:"get_g_list_all_guilds"`
-	GetGroupListGuilds       string `yaml:"get_g_list_guilds"`
-	GetGroupListReturnGuilds bool   `yaml:"get_g_list_return_guilds"`
-	GetGroupListGuidsType    int    `yaml:"get_g_list_guilds_type"`
-	GetGroupListDelay        int    `yaml:"get_g_list_delay"`
-	ForwardMsgLimit          int    `yaml:"forward_msg_limit"`
-	CustomBotName            string `yaml:"custom_bot_name"`
-	TransFormApiIds          bool   `yaml:"transform_api_ids"`
-	AutoPutInteraction       bool   `yaml:"auto_put_interaction"`
-	PutInteractionDelay      int    `yaml:"put_interaction_delay"`
+	GetGroupListAllGuilds    bool     `yaml:"get_g_list_all_guilds"`
+	GetGroupListGuilds       string   `yaml:"get_g_list_guilds"`
+	GetGroupListReturnGuilds bool     `yaml:"get_g_list_return_guilds"`
+	GetGroupListGuidsType    int      `yaml:"get_g_list_guilds_type"`
+	GetGroupListDelay        int      `yaml:"get_g_list_delay"`
+	ForwardMsgLimit          int      `yaml:"forward_msg_limit"`
+	CustomBotName            string   `yaml:"custom_bot_name"`
+	TransFormApiIds          bool     `yaml:"transform_api_ids"`
+	AutoPutInteraction       bool     `yaml:"auto_put_interaction"`
+	PutInteractionDelay      int      `yaml:"put_interaction_delay"`
+	PutInteractionExcept     []string `yaml:"put_interaction_except"`
 	//onebot修改
-	TwoWayEcho bool `yaml:"twoway_echo"`
-	Array      bool `yaml:"array"`
-	NativeOb11 bool `yaml:"native_ob11"`
+	TwoWayEcho       bool `yaml:"twoway_echo"`
+	Array            bool `yaml:"array"`
+	NativeOb11       bool `yaml:"native_ob11"`
+	DisableErrorChan bool `yaml:"disable_error_chan"`
 	//url相关
 	VisibleIp    bool `yaml:"visible_ip"`
 	UrlToQrimage bool `yaml:"url_to_qrimage"`
