@@ -21,6 +21,7 @@ type Settings struct {
 	ShardCount   int    `yaml:"shard_count"`
 	ShardID      int    `yaml:"shard_id"`
 	UseUin       bool   `yaml:"use_uin"`
+	ShardNum     int    `yaml:"shard_num"`
 	//事件订阅类
 	TextIntent []string `yaml:"text_intent"`
 	//转换类
@@ -125,6 +126,8 @@ type Settings struct {
 	Array            bool `yaml:"array"`
 	NativeOb11       bool `yaml:"native_ob11"`
 	DisableErrorChan bool `yaml:"disable_error_chan"`
+	StringOb11       bool `yaml:"string_ob11"`
+	StringAction     bool `yaml:"string_action"`
 	//url相关
 	VisibleIp    bool `yaml:"visible_ip"`
 	UrlToQrimage bool `yaml:"url_to_qrimage"`

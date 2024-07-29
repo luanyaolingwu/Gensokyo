@@ -34,6 +34,7 @@ import (
 	"github.com/hoshinonyaruko/gensokyo/url"
 	"github.com/hoshinonyaruko/gensokyo/webui"
 	"github.com/hoshinonyaruko/gensokyo/wsclient"
+	"github.com/tencent-connect/botgo/sessions/multi"
 	"google.golang.org/grpc"
 
 	"github.com/gin-gonic/gin"
@@ -282,9 +283,13 @@ func main() {
 			// 指定需要启动的分片数为 2 的话可以手动修改 wsInfo
 			if conf.Settings.ShardCount == 1 {
 				go func() {
-					wsInfo.Shards = 1
-					if err = botgo.NewSessionManager().Start(wsInfo, token, &intent); err != nil {
-						log.Fatalln(err)
+					wsInfo.Shards = uint32(conf.Settings.ShardNum)
+					if wsInfo.Shards == 1 {
+						if err = botgo.NewSessionManager().Start(wsInfo, token, &intent); err != nil {
+							log.Fatalln(err)
+						}
+					} else {
+						multi.NewShardManager(wsInfo, token, &intent).StartAllShards()
 					}
 				}()
 				log.Printf("不使用分片,所有信息都由当前gensokyo处理...\n")

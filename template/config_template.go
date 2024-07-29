@@ -18,6 +18,7 @@ settings:
   client_secret: "<YOUR_CLIENT_SECRET>"              # 你的客户端密钥
   shard_count: 1                    #分片数量 默认1
   shard_id: 0                       #当前分片id 默认从0开始,详细请看 https://bot.q.qq.com/wiki/develop/api/gateway/reference.html
+  shard_num: 1                      #接口调用超过频率限制时,如果不想要多开gsk,尝试调大.gsk会尝试连接到n个分片处理信息. n为你所配置的值.与 shard_count和shard_id互不相干.
 
   #事件订阅
   text_intent:                                       # 请根据公域 私域来选择intent,错误的intent将连接失败
@@ -161,6 +162,8 @@ settings:
   array: false                      #连接trss云崽请开启array,是否以segment形式上报信息.
   native_ob11 : false               #如果你的机器人收到事件报错,请开启此选项增加兼容性
   disable_error_chan : false        #禁用ws断开时候将信息放入补发频道,当信息非常多时可能导致冲垮应用端,可以设置本选项为true.
+  string_ob11 : false               #api不再返回转换后的int类型,而是直接转换,需应用端适配.
+  string_action : false             #开启后将兼容action调用中使用string形式的user_id和group_id.
 
   #URL相关
   visible_ip : false                #转换url时,如果server_dir是ip true将以ip形式发出url 默认隐藏url 将server_dir配置为自己域名可以转换url
