@@ -377,8 +377,14 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 				postGroupMessageWithRetry(apiv2, message.Params.GroupID.(string), groupMessage)
 			}
 
-			// 发送成功回执
-			retmsg, _ = SendResponse(client, err, &message, resp, api, apiv2)
+			if !config.GetNoRetMsg() {
+				if config.GetThreadsRetMsg() {
+					go SendResponse(client, err, &message, resp, api, apiv2)
+				} else {
+					// 发送成功回执
+					retmsg, _ = SendResponse(client, err, &message, resp, api, apiv2)
+				}
+			}
 
 			delete(foundItems, imageType) // 从foundItems中删除已处理的图片项
 			messageText = ""
@@ -431,8 +437,16 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 			} else if err != nil && strings.Contains(err.Error(), "context deadline exceeded") {
 				postGroupMessageWithRetry(apiv2, message.Params.GroupID.(string), groupMessage)
 			}
-			//发送成功回执
-			retmsg, _ = SendResponse(client, err, &message, resp, api, apiv2)
+
+			if !config.GetNoRetMsg() {
+				//发送成功回执
+				if config.GetThreadsRetMsg() {
+					go SendResponse(client, err, &message, resp, api, apiv2)
+				} else {
+					retmsg, _ = SendResponse(client, err, &message, resp, api, apiv2)
+				}
+			}
+
 		}
 		var resp *dto.GroupMessageResponse
 		// 遍历foundItems并发送每种信息
@@ -501,8 +515,15 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 						} else if err != nil && strings.Contains(err.Error(), "context deadline exceeded") {
 							postGroupMessageWithRetry(apiv2, message.Params.GroupID.(string), groupMessage)
 						}
-						//发送成功回执
-						retmsg, _ = SendResponse(client, err, &message, resp, api, apiv2)
+
+						if !config.GetNoRetMsg() {
+							//发送成功回执
+							if config.GetThreadsRetMsg() {
+								go SendResponse(client, err, &message, resp, api, apiv2)
+							} else {
+								retmsg, _ = SendResponse(client, err, &message, resp, api, apiv2)
+							}
+						}
 					}
 					continue // 跳过这个项，继续下一个
 				}
@@ -591,8 +612,16 @@ func HandleSendGroupMsg(client callapi.Client, api openapi.OpenAPI, apiv2 openap
 						postGroupMessageWithRetry(apiv2, message.Params.GroupID.(string), groupMessage)
 					}
 				}
-				//发送成功回执
-				retmsg, _ = SendResponse(client, err, &message, resp, api, apiv2)
+
+				if !config.GetNoRetMsg() {
+					//发送成功回执
+					if config.GetThreadsRetMsg() {
+						go SendResponse(client, err, &message, resp, api, apiv2)
+					} else {
+						retmsg, _ = SendResponse(client, err, &message, resp, api, apiv2)
+					}
+				}
+
 			}
 		}
 	case "guild":
