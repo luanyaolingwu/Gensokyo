@@ -446,12 +446,22 @@ func main() {
 			}
 		}
 	}
+
+	webhookHandler := server.NewWebhookHandler(5000)
+
+	// 启动消息处理协程
+	go webhookHandler.ListenAndProcessMessages()
+
 	r.GET("/updateport", server.HandleIpupdate)
 	r.POST("/delpic", server.DeleteImageHandler(rateLimiter))
 	r.POST("/uploadpic", server.UploadBase64ImageHandler(rateLimiter))
 	r.POST("/uploadpicv2", server.UploadBase64ImageHandlerV2(rateLimiter, apiV2))
 	r.POST("/uploadpicv3", server.UploadBase64ImageHandlerV3(rateLimiter, api))
 	r.POST("/uploadrecord", server.UploadBase64RecordHandler(rateLimiter))
+	// 使用 CreateHandleValidation，传入 WebhookHandler 实例
+	server.InitPrivateKey(conf.Settings.ClientSecret)
+	r.POST("/"+conf.Settings.WebhookPath, server.CreateHandleValidationSafe(webhookHandler))
+
 	r.Static("/channel_temp", "./channel_temp")
 	if config.GetFrpPort() == "0" && !config.GetDisableWebui() {
 		//webui和它的api
@@ -535,7 +545,7 @@ func main() {
 	mylog.Printf("gin运行在%v端口", serverPort)
 	// 在一个新的goroutine中启动主服务器
 	go func() {
-		if serverPort == "443" {
+		if serverPort == "443" || conf.Settings.ForceSSL {
 			// 使用HTTPS
 			crtPath := config.GetCrtPath()
 			keyPath := config.GetKeyPath()
@@ -554,18 +564,18 @@ func main() {
 		}
 	}()
 
-	// 如果主服务器使用443端口，同时在一个新的goroutine中启动444端口的HTTP服务器 todo 更优解
-	if serverPort == "443" {
+	// 如果主服务器使用443端口或conf.Settings.ForceSSL为true，同时在一个新的goroutine中启动conf.Settings.HttpPortAfterSSL端口的HTTP服务器
+	if serverPort == "443" || conf.Settings.ForceSSL {
 		go func() {
-			// 创建另一个http.Server实例（用于444端口）
-			httpServer444 := &http.Server{
-				Addr:    "0.0.0.0:444",
+			// 创建另一个http.Server实例（用于conf.Settings.HttpPortAfterSSL端口）
+			httpServerHttpPortAfterSSL := &http.Server{
+				Addr:    "0.0.0.0:" + conf.Settings.HttpPortAfterSSL,
 				Handler: r,
 			}
 
-			// 启动444端口的HTTP服务器
-			if err := httpServer444.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				log.Fatalf("listen (HTTP 444): %s\n", err)
+			// 启动conf.Settings.HttpPortAfterSSL端口的HTTP服务器
+			if err := httpServerHttpPortAfterSSL.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("listen (HTTP %s): %s\n", conf.Settings.HttpPortAfterSSL, err)
 			}
 		}()
 	}

@@ -65,10 +65,15 @@ type Settings struct {
 	EnableWsServer bool   `yaml:"enable_ws_server"`
 	WsServerToken  string `yaml:"ws_server_token"`
 	//ssl和链接转换类
-	IdentifyFile   bool    `yaml:"identify_file"`
-	IdentifyAppids []int64 `yaml:"identify_appids"`
-	Crt            string  `yaml:"crt"`
-	Key            string  `yaml:"key"`
+	IdentifyFile    bool     `yaml:"identify_file"`
+	IdentifyAppids  []int64  `yaml:"identify_appids"`
+	Crt             string   `yaml:"crt"`
+	Key             string   `yaml:"key"`
+	UseSelfCrt      bool     `yaml:"use_self_crt"`
+	WebhookPath     string   `yaml:"webhook_path"`
+	WebhookPrefixIp []string `yaml:"webhook_prefix_ip"`
+	ForceSSL        bool     `yaml:"force_ssl"`
+	HttpPortAfterSSL string  `yaml:"http_port_after_ssl"`
 	//日志类
 	DeveloperLog     bool `yaml:"developer_log"`
 	LogLevel         int  `yaml:"log_level"`
